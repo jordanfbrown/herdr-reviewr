@@ -250,7 +250,12 @@ fn run_editor(
         &path,
         target.line,
     ) else {
-        app.status = "set `editor` in the plugin config, or $EDITOR".into();
+        // Two different causes, and the first would otherwise be told to set what it set.
+        app.status = if configured.is_some() {
+            "the `editor` config key names no program".into()
+        } else {
+            "set `editor` in the plugin config, or $EDITOR".into()
+        };
         return Ok(());
     };
     // `all_files` lists what the index tracks, so a file removed from the worktree can still

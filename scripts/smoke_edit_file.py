@@ -339,6 +339,21 @@ def main():
         s.press("q")
         s.close()
 
+        # A value that survives config validation but names no program is a different cause
+        # from an unset editor, and must not be reported as one.
+        bare_dir = os.path.join(home, "cfg-bare")
+        os.makedirs(bare_dir)
+        with open(os.path.join(bare_dir, "config.toml"), "w") as f:
+            f.write('editor = "\'\'"\n')
+        s = Session(binary, root, None, config_dir=bare_dir)
+        s.drain()
+        mark = len(s.seen)
+        s.press("e")
+        check("an `editor` key naming no program says which cause it is",
+              b"names no program" in plain(s.seen[mark:]))
+        s.press("q")
+        s.close()
+
         # A window editor that never launches has to say so: reviewr is not watching it, and
         # its own output goes nowhere.
         broken = os.path.join(bindir, "code")

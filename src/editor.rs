@@ -25,9 +25,10 @@ enum LineArg {
 /// One editor family: the binary names that select it, how it takes a line, and the flag that
 /// makes it block until the file closes.
 ///
-/// A window editor returns the moment it hands the file to a running instance, so without
-/// its wait flag reviewr would repaint before the reviewer typed anything. A terminal editor
-/// owns the pane until it exits and needs none.
+/// A window editor returns the moment it hands the file to a running instance. Its wait flag is
+/// what keeps the process alive while the file is open, which is how a second press on that file
+/// knows to say so rather than launch another. A terminal editor owns the pane until it exits
+/// and needs none (`specs/input.md` Edit).
 struct Dialect {
     names: &'static [&'static str],
     line: LineArg,

@@ -44,8 +44,11 @@ fn resolve_on(path: &OsStr, name: &OsStr) -> Option<PathBuf> {
     })
 }
 
-/// Resolve `program` on the host PATH and give the child that same PATH
-/// (`specs/herdr-host.md` HH-LAUNCHER-BLIND).
+/// Resolve `program` on the host PATH — the common host bins first, the inherited PATH after —
+/// and give the child that same PATH (`specs/herdr-host.md` HH-LAUNCHER-BLIND).
+///
+/// For the tools reviewr runs for itself. [`user_command`] is the other way round, for the
+/// reviewer's own.
 pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
     let program = program.as_ref();
     let path = host_path();

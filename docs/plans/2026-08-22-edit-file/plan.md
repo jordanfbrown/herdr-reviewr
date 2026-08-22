@@ -40,7 +40,7 @@ returns them to the same place.
 ## Execution Plan
 
 1. [x] `src/config.rs`: add `editor: Option<String>` beside `github_host`. Register `"editor"` in `KNOWN_KEYS` (line 76 region), parse it at the `github_host` arm (line 419 region), add the accessor and the `to_json` entry. Reject an empty string as an invalid value. Unit tests for parsing, the empty-string rejection, and the JSON round trip.
-2. [x] `src/lib.rs`: extract the inline mode setup at lines 80 to 90 into `enter_terminal_modes(kbd)`, the mirror of `restore_terminal(kbd)` at line 147. Call it from `run()` and from the resume path, so one function owns the mode stack.
+2. [x] `src/lib.rs`: extract the inline mode setup at lines 80 to 90 into `claim_input_modes(kbd)` and its `claim_terminal(kbd)` caller, the mirrors of `release_input_modes`/`release_terminal`. Call it from `run()` and from the resume path, so one function owns the mode stack.
 3. [x] `src/app.rs`: add `EditTarget { path: String, line: u32 }` and `editor_request: Option<EditTarget>`. `start_edit` routes to the comment when `comment_claims_edit()` finds one and to the file otherwise. `edit_target()` reads the cursor: the read pane takes `self.visible[..=self.diff_cursor].iter().rev().find_map(Row::new_no)` and falls back to 1, the navigator takes `current_entry()` at line 1, a preview takes 1. Unit tests per surface, no terminal needed.
 4. [x] `src/lib.rs`: `run_editor` services one request between frames. It resolves the command from `PluginConfig::editor()`, else `$VISUAL`, else `$EDITOR`, substitutes `{file}` and `{line}`, appends the path when the value names neither, spawns through `proc::user_command`, then re-enters the modes and calls `request_world_refresh(false, false)`.
 5. [x] `src/app.rs` and `src/ui.rs`: add `FooterAction::EditFile` with the label `e edit file`, and push it on the diff-line, preview-line, fold, open-preview, and file-row cases in `footer_actions`. The commented-line case keeps `e edit` as its primary.
@@ -49,14 +49,14 @@ returns them to the same place.
 
 ## Likely Files
 
-| file                 | change                                                                    |
-| -------------------- | ------------------------------------------------------------------------- |
-| `src/config.rs`      | the `editor` key: known-key list, parser, field, accessor, `to_json`      |
-| `src/app.rs`         | `EditorTarget`, `edit_file_target`, `start_edit` routing, footer actions  |
-| `src/lib.rs`         | `enter_terminal_modes`, `run_editor`, the event-loop service point        |
-| `src/ui.rs`          | the `EditFile` footer label                                               |
-| `tests/app_flow.rs`  | the contest, the inert rows, the footer, the refresh                      |
-| `README.md`          | the keybinding row and the `editor` config section                        |
+| file                 | change                                                                           |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `src/config.rs`      | the `editor` key: known-key list, parser, field, accessor, `to_json`             |
+| `src/app.rs`         | `EditTarget`, `edit_target`, `comment_claims_edit`, `start_edit`, footer actions |
+| `src/lib.rs`         | `claim_terminal`/`release_terminal`, `run_editor`, the event-loop service point  |
+| `src/ui.rs`          | the `EditFile` footer label                                                      |
+| `tests/app_flow.rs`  | the contest, the inert rows, the footer, the refresh                             |
+| `README.md`          | the keybinding row and the `editor` config section                               |
 
 No change to `src/keymap.rs`. `edit` is one action and stays bound to `e`.
 

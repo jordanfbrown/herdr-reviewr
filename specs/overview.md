@@ -89,11 +89,11 @@ Newer content paints over the old in place, reconciling the reviewer's place as 
 
 ## Invariants
 
-| Always true                                                                                                                                                 |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Always true                                                                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | reviewr never commits, stages, or mutates the worktree, the index, or any branch. Its only git writes are private refs under `refs/reviewr/`: the turn baseline and the base pick. The reviewer's own editor writes, on their press and under their hand (`input.md` Edit).  |
-| reviewr never writes to a forge. It reads the pull request through the forge's official CLI and opens links in the browser, nothing more.                   |
-| A comment, saved or being typed, is never lost to a refresh or the agent's edits. Only the reviewer removes it, and only an explicit export takes it out.   |
+| reviewr never writes to a forge. It reads the pull request through the forge's official CLI and opens links in the browser, nothing more.                                                                                                                                    |
+| A comment, saved or being typed, is never lost to a refresh or the agent's edits. Only the reviewer removes it, and only an explicit export takes it out.                                                                                                                    |
 
 ## Related specs
 

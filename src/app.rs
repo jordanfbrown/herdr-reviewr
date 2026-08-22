@@ -2982,8 +2982,10 @@ impl App {
     /// survives — the comments list, which owns the screen instead, still claims it
     /// (`specs/input.md` Edit).
     fn comment_claims_edit(&self) -> bool {
-        let on_the_diff =
-            self.focus == Focus::Diff && !self.preview_active() && self.select_anchor.is_none();
+        let on_the_diff = self.tab.is_file_tab()
+            && self.focus == Focus::Diff
+            && !self.preview_active()
+            && self.select_anchor.is_none();
         (self.mode == Mode::List || on_the_diff) && self.target_comment().is_some()
     }
 
@@ -4949,6 +4951,28 @@ mod tests {
         app.open_list();
         app.start_edit();
         assert!(app.composing(), "the list edits its comment under a live range");
+    }
+
+    #[test]
+    fn the_pr_tab_leaves_the_key_alone_entirely() {
+        // The diff is not on screen there, so neither branch has a target: the file branch has
+        // no file tab, and the comment behind the tab has no card (`specs/input.md` Edit).
+        let mut app = edit_app();
+        app.store.add(crate::model::Comment {
+            file: "src/lib.rs".into(),
+            side: Side::New,
+            start: 12,
+            end: 12,
+            lines: "+x".into(),
+            text: "note".into(),
+            diff_anchored: true,
+        });
+        app.diff_cursor = 2;
+        app.tab = super::Tab::Pr;
+
+        app.start_edit();
+        assert!(!app.composing(), "the comment behind the tab does not claim the key");
+        assert!(app.editor_request.is_none(), "and no file is named");
     }
 
     #[test]
