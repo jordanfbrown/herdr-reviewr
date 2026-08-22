@@ -214,11 +214,6 @@ fn drain_input(app: &mut App) -> Result<()> {
     Ok(())
 }
 
-/// Service one `edit` request that named a file (`specs/input.md` Edit).
-///
-/// The pane suspends down to a plain terminal, so the editor owns it outright, then rebuilds the
-/// same mode stack and repaints. The file may have changed on disk, so a world refresh reconciles
-/// the diff in place (`overview.md` Continuity). reviewr itself still writes nothing.
 /// A graphical editor whose window is open on the reviewer's screen.
 ///
 /// reviewr never waits on one. Its wait flag returns only when the reviewer closes the file,
@@ -233,24 +228,50 @@ struct OpenEditor {
 ///
 /// Every launched child is waited on exactly here, so none is left unreaped, and the close is
 /// what refreshes the changeset: the reviewer sees their edit the moment they put the file
-/// down (`specs/input.md` Edit).
+/// down (`specs/input.md` Edit). An editor that never opened the file has nowhere else to say
+/// so — its own output goes nowhere — so a failure takes the status over a success.
 fn reap_editors(open: &mut Vec<OpenEditor>, app: &mut App) {
-    let mut closed = None;
+    let mut edited: Vec<String> = Vec::new();
+    let mut failed: Option<String> = None;
     open.retain_mut(|editor| {
-        // A wait that errors is a child reviewr can no longer account for, and holding it
-        // would only leak the slot: treat it as closed.
-        if matches!(editor.child.try_wait(), Ok(None)) {
-            return true;
+        let outcome = match editor.child.try_wait() {
+            Ok(None) => return true,
+            Ok(Some(status)) if status.success() => None,
+            Ok(Some(status)) => Some(format!("{status}")),
+            // A wait that errors is a child reviewr can no longer account for, and holding
+            // it would only leak the slot.
+            Err(e) => Some(format!("{e}")),
+        };
+        let path = std::mem::take(&mut editor.path);
+        match outcome {
+            None => edited.push(path),
+            Some(why) if failed.is_none() => failed = Some(format!("{path}: editor {why}")),
+            Some(_) => {}
         }
-        closed = Some(std::mem::take(&mut editor.path));
         false
     });
-    let Some(path) = closed else { return };
-    app.status = format!("edited {path}");
+    if let Some(why) = failed {
+        app.status = why;
+    } else if let [path] = edited.as_slice() {
+        app.status = format!("edited {path}");
+    } else if edited.len() > 1 {
+        app.status = format!("edited {} files", edited.len());
+    } else {
+        return;
+    }
+    if edited.is_empty() {
+        return;
+    }
     app.request_world_refresh(false, false);
     app.refresh_commanded = true;
 }
 
+/// Service one `edit` request that named a file (`specs/input.md` Edit).
+///
+/// A terminal editor owns the pane outright: it suspends down to a plain terminal and rebuilds
+/// the same mode stack on the way back. A graphical editor is spawned and left to
+/// [`reap_editors`]. Either way the file may have changed on disk, so a world refresh
+/// reconciles the diff in place (`overview.md` Continuity). reviewr itself still writes nothing.
 fn run_editor(
     terminal: &mut DefaultTerminal,
     app: &mut App,
@@ -275,6 +296,15 @@ fn run_editor(
         repaint(terminal, app)?;
         return Ok(());
     };
+    // `all_files` lists what the index tracks, so a file removed from the worktree can still
+    // be a row, and the changeset only catches it inside a scope that diffs the worktree
+    // (`specs/review-model.md`). An editor opens an empty buffer for it and recreates it on
+    // save, so the press stops here. Off the render path, so one `stat` costs nothing.
+    if !path.is_file() {
+        app.status = format!("{} is gone", target.path);
+        repaint(terminal, app)?;
+        return Ok(());
+    }
     logln!("editor run {} {:?}", command.program, command.args);
     // The reviewer's own PATH first, so a version-managed editor wins over a stale copy in a
     // common bin, with the host locations as the fallback a stripped pane PATH needs
@@ -868,11 +898,11 @@ fn glyph_clears(lit_for: Duration) -> bool {
 /// build's own speed — shared by the world and search workers.
 const WORKER_TIGHT_WAKE: Duration = Duration::from_millis(15);
 
-/// The wake while a world job is in flight: tight for a building job so its landing paints
-/// near the build's own speed, the fetch cadence for a sample-only one.
 /// How often the loop looks for a closed editor while one is open (`specs/input.md` Edit).
 const EDITOR_WAKE: Duration = Duration::from_millis(250);
 
+/// The wake while a world job is in flight: tight for a building job so its landing paints
+/// near the build's own speed, the fetch cadence for a sample-only one.
 fn world_wake(builds: bool) -> Duration {
     if builds { WORKER_TIGHT_WAKE } else { Duration::from_millis(100) }
 }

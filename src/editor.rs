@@ -221,12 +221,36 @@ fn dialect_for(program: &str) -> Option<&'static Dialect> {
     DIALECTS.iter().find(|d| d.names.contains(&name.as_str()))
 }
 
+/// Substitute every `{file}` and `{line}` in `word`, in one pass.
+///
+/// One pass, so a substituted value is never itself searched: a path that spells `{line}` is a
+/// file name, not a placeholder.
+fn substitute(word: &str, file: &str, line: &str) -> String {
+    let mut out = String::with_capacity(word.len());
+    let mut rest = word;
+    while let Some(at) = rest.find('{') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        if let Some(tail) = rest.strip_prefix("{file}") {
+            out.push_str(file);
+            rest = tail;
+        } else if let Some(tail) = rest.strip_prefix("{line}") {
+            out.push_str(line);
+            rest = tail;
+        } else {
+            out.push('{');
+            rest = &rest['{'.len_utf8()..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Build the command from a user template, substituting every `{file}` and `{line}`.
 fn from_template(template: &str, file: &str, line: u32) -> EditorCommand {
     let named_file = template.contains("{file}");
-    let mut words = split_command(template)
-        .into_iter()
-        .map(|w| w.replace("{file}", file).replace("{line}", &line.to_string()));
+    let line = line.to_string();
+    let mut words = split_command(template).into_iter().map(|w| substitute(&w, file, &line));
     let program = words.next().unwrap_or_default();
     let mut args: Vec<String> = words.collect();
     if !named_file {
@@ -329,6 +353,18 @@ mod tests {
         // An unknown binary says nothing, and only one of the two guesses is survivable.
         assert!(env("myeditor").unwrap().wants_terminal);
         assert!(cfg("myed {file}"));
+    }
+
+    #[test]
+    fn a_path_that_spells_a_placeholder_is_not_substituted_twice() {
+        // `{line}.cshtml` is a real ASP.NET route file name. One pass, so the path lands whole.
+        let path = PathBuf::from("/repo/routes/{line}.cshtml");
+        let got = resolve(Some("code -g {file}:{line}"), None, None, &path, 41).unwrap();
+        assert_eq!(argv(&got), "code -g /repo/routes/{line}.cshtml:41");
+        // A brace that opens no placeholder is just a character.
+        let plain = PathBuf::from("/repo/a.rs");
+        let kept = resolve(Some("ed --at={line} {x} {file}"), None, None, &plain, 7).unwrap();
+        assert_eq!(argv(&kept), "ed --at=7 {x} /repo/a.rs");
     }
 
     #[test]

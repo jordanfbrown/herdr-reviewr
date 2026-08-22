@@ -231,6 +231,25 @@ def main():
         s.press("q")
         s.close()
 
+        # A graphical editor writes to no terminal, so the pane is the only place its failure
+        # can land — and it must not be reported as a finished edit.
+        broken = os.path.join(bindir, "code")
+        with open(broken, "w") as f:
+            f.write("#!/bin/sh\nexit 3\n")
+        os.chmod(broken, 0o755)
+        s = Session(binary, root, broken)
+        s.drain()
+        mark = len(s.seen)
+        s.press("e")
+        deadline = time.perf_counter() + 10
+        while b"exit status" not in s.seen[mark:] and time.perf_counter() < deadline:
+            s.drain(quiet=0.3, timeout=2.0)
+        after = s.seen[mark:]
+        check("a graphical editor that fails says so on the pane", b"exit status" in after)
+        check("and is never reported as an edit", b"edited" not in after)
+        s.press("q")
+        s.close()
+
         # Every failure path has to reach the reviewer on the frame it happened, not on the
         # next keypress. The loop draws only after an event arrives, so the run has to repaint.
         for label, ed, needle in [
