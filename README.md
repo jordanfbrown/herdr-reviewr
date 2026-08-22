@@ -313,7 +313,9 @@ Quote a path that contains a space — `"/Applications/Sublime Text.app/.../subl
 key or in `$EDITOR`. No shell runs the command, so quoting is the only escape.
 
 `{file}` and `{line}` are substituted wherever they appear. This value is the whole command, so
-reviewr adds nothing to it. With no `editor` key and no `$EDITOR`, `e` tells you what to set
+reviewr adds nothing to it. If your command carries `--wait` or `--block`, reviewr takes that as
+a window editor and leaves the pane alone, even when it can't place the binary — which is what
+you want if you point it at something like `/Applications/Zed.app/Contents/MacOS/cli`. With no `editor` key and no `$EDITOR`, `e` tells you what to set
 rather than opening something you didn't choose.
 
 ### Keybindings

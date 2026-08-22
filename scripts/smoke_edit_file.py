@@ -24,6 +24,10 @@ import termios
 import time
 
 ROWS, COLS = 40, 120
+# Every session reads a config dir. Left unset, reviewr falls back to the real installed one
+# and the suite would run against whatever the machine's own `editor` key says — opening the
+# reviewer's actual editor. `main` points this at an empty directory before any session starts.
+NO_CONFIG = None
 ALT_ENTER = b"\x1b[?1049h"
 ALT_LEAVE = b"\x1b[?1049l"
 EDITED_LINE = b"EDITED-BY-THE-SCRIPTED-EDITOR"
@@ -100,9 +104,8 @@ class Session:
             env["EDITOR"] = editor
         if visual:
             env["VISUAL"] = visual
-        env.pop("HERDR_PLUGIN_CONFIG_DIR", None)  # standalone: no plugin config reads
-        if config_dir:
-            env["HERDR_PLUGIN_CONFIG_DIR"] = config_dir
+        # Never the machine's own: an empty directory is the missing-file default.
+        env["HERDR_PLUGIN_CONFIG_DIR"] = config_dir or NO_CONFIG
         self.proc = subprocess.Popen(
             [binary, repo, "--poll", str(poll)],
             stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True,
@@ -175,6 +178,9 @@ def main():
             failures.append(name)
 
     with tempfile.TemporaryDirectory() as home:
+        global NO_CONFIG
+        NO_CONFIG = os.path.join(home, "no-config")
+        os.makedirs(NO_CONFIG)
         root = os.path.join(home, "repo")
         bindir = os.path.join(home, "bin")
         os.makedirs(root)

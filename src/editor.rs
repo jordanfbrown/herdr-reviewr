@@ -147,7 +147,7 @@ pub fn resolve(
     let mut args: Vec<String> = words.collect();
     let Some(dialect) = dialect_for(&program) else {
         args.push(file);
-        let wants_terminal = wants_terminal(&program);
+        let wants_terminal = wants_terminal(&program, &args);
         return Some(EditorCommand { program, args, wants_terminal });
     };
     // The reviewer's own flags win: a `$EDITOR` that already waits never waits twice, because
@@ -171,17 +171,23 @@ pub fn resolve(
             args.push(file);
         }
     }
-    let wants_terminal = wants_terminal(&program);
+    let wants_terminal = wants_terminal(&program, &args);
     Some(EditorCommand { program, args, wants_terminal })
 }
 
-/// Whether `program` draws in the pane it was launched from.
+/// Whether the command draws in the pane it was launched from.
 ///
-/// Its own name is the only signal, and it is the same signal in every path: an editor that
-/// takes a wait flag has a window of its own, and everything else — a binary reviewr does not
-/// know included — draws in the terminal. Unknown means the pane, which is the outcome a
-/// terminal editor cannot survive being denied (`specs/input.md` Edit).
-fn wants_terminal(program: &str) -> bool {
+/// Two signals, asked in the same order in every path. A command already carrying a wait flag
+/// names a window editor whatever its binary is called: no terminal editor has one, because
+/// blocking is what a terminal editor inherently does. Long forms only, since `-w` and `-b` are
+/// ordinary short flags elsewhere (helix spells `--working-dir` as `-w`).
+///
+/// Failing that, the binary's own name. Unknown means the pane, which is the outcome a terminal
+/// editor cannot survive being denied (`specs/input.md` Edit).
+fn wants_terminal(program: &str, args: &[String]) -> bool {
+    if args.iter().any(|a| a == "--wait" || a == "--block") {
+        return false;
+    }
     dialect_for(program).is_none_or(|d| d.wait.is_none())
 }
 
@@ -246,7 +252,7 @@ fn from_template(template: &str, file: &str, line: u32) -> Option<EditorCommand>
     if !named_file {
         args.push(file.to_owned());
     }
-    let wants_terminal = wants_terminal(&program);
+    let wants_terminal = wants_terminal(&program, &args);
     Some(EditorCommand { program, args, wants_terminal })
 }
 
@@ -343,6 +349,14 @@ mod tests {
         // An unknown binary says nothing, and only one of the two guesses is survivable.
         assert!(env("myeditor").unwrap().wants_terminal);
         assert!(cfg("myed {file}"));
+        // A wait flag names a window editor whatever the binary is called: Zed's own bundle
+        // ships its CLI as `cli`, and pointing at that must not cost the reviewer the pane.
+        assert!(!cfg("/Applications/Zed.app/Contents/MacOS/cli --wait {file}:{line}"));
+        assert!(!cfg("/opt/weird/ed --block --line {line} {file}"));
+        assert!(!env("/Applications/Zed.app/Contents/MacOS/cli --wait").unwrap().wants_terminal);
+        // Short spellings are ordinary flags elsewhere, so they say nothing: helix's `-w` is
+        // `--working-dir`.
+        assert!(cfg("hx -w {file}"));
     }
 
     #[test]
