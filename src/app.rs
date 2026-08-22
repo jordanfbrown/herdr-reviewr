@@ -473,11 +473,11 @@ pub enum Band {
     Move,
 }
 
-/// The file an `edit` press named when no comment sat under the cursor: an absolute path and
-/// the 1-based line to open (`specs/input.md` Edit).
+/// The file `edit` opens: a repository-relative path and the 1-based line to open it at
+/// (`specs/input.md` Edit).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EditorTarget {
-    pub path: PathBuf,
+pub struct EditTarget {
+    pub path: String,
     pub line: u32,
 }
 
@@ -677,7 +677,7 @@ pub struct App {
     pub search_track: Option<String>,
     /// An `edit` press that named a file; the event loop suspends the pane, runs the editor,
     /// and resumes (`specs/input.md` Edit). `None` when idle.
-    pub editor_request: Option<EditorTarget>,
+    pub editor_request: Option<EditTarget>,
     /// The in-file find band's state while `mode == Mode::Find`, `None` otherwise
     /// (specs/find-in-file.md).
     pub find: Option<Find>,
@@ -2819,6 +2819,17 @@ impl App {
     /// End the live gesture without a copy: the reflow-input cancel, and the dissolve of a
     /// press that never moved or a lost gutter drag. The multi-click chain resets — only a
     /// gesture's own release continues it — and the freeze lifts (specs/text-selection.md).
+    /// Forget where the pointer was.
+    ///
+    /// Mouse reporting stops while an external program owns the terminal, so no release and no
+    /// motion will arrive to end a drag or move the hover off the cell it was painted on
+    /// (`specs/input.md` Edit).
+    pub(crate) fn forget_pointer(&mut self) {
+        self.cancel_gesture();
+        self.finish_divider_drag();
+        self.hover = None;
+    }
+
     pub(crate) fn cancel_gesture(&mut self) {
         if !self.gesture_active() {
             return; // nothing live: the multi-click chain survives unrelated input
@@ -2964,82 +2975,46 @@ impl App {
             self.edit_comment();
             return;
         }
-        self.request_edit_file();
+        self.editor_request = self.edit_target();
     }
 
-    /// Name the file the cursor points at, for the event loop to open (`specs/input.md` Edit).
-    /// A directory row and the text-entry modes name nothing, so nothing is requested.
-    fn request_edit_file(&mut self) {
-        let Some(target) = self.editable_file() else {
-            // Only a cursor that named a file at all deserves a message. Elsewhere the key is
-            // inert and says nothing (`specs/input.md` Edit).
-            if self.edit_file_target().is_some() {
-                self.status = "no file here".into();
-            }
-            return;
-        };
-        self.editor_request = Some(target);
-    }
-
-    /// Whether the cursor names a file the changeset still has, for the footer.
+    /// The file `edit` opens and the line to open it at, or `None` where the key opens nothing.
     ///
-    /// The cheap half of [`Self::editable_file`]: the press stats the path, since a file can
-    /// vanish between polls, but `footer_bands` runs several times per painted frame and a
-    /// `stat` there is a blocking round trip on a network worktree. The two disagree only for
-    /// a file deleted since the last refresh, which is stale, never wrong (`overview.md`).
-    pub(crate) fn names_a_live_file(&self) -> bool {
-        let Some((path, _)) = self.edit_file_target() else { return false };
-        self.changed_annotation(&path).map(|a| a.change) != Some(crate::model::ChangeKind::Deleted)
-    }
-
-    /// The file the cursor names, when the worktree still holds it. What the press acts on
-    /// (`specs/input.md` Edit).
-    pub(crate) fn editable_file(&self) -> Option<EditorTarget> {
-        let (path, line) = self.edit_file_target()?;
-        // Absolute, so no editor can read the file name as one of its own flags and no dialect
-        // needs a `--` guard (`src/editor.rs`). `absolute` keeps symlinks, unlike canonicalize,
-        // so a worktree reached through one opens under the name the reviewer knows.
-        let path = std::path::absolute(self.repo.join(path)).ok()?;
-        // The changeset names deleted files, and the navigator can outlive one by a poll.
-        path.is_file().then_some(EditorTarget { path, line })
-    }
-
-    /// The repository-relative file and 1-based line the cursor names, or `None` where nothing
-    /// is editable. Pure, so every surface is unit-tested without a terminal.
-    fn edit_file_target(&self) -> Option<(String, u32)> {
-        // The comments list, the pickers, and every text field keep their own meaning for the
-        // key, so `edit` never reaches a file from there (`specs/input.md` Edit).
+    /// Pure and total. The press acts on it and the footer offers the key exactly when it is
+    /// `Some`, so the two cannot disagree, and no surface can be reached without passing
+    /// through here (`specs/input.md` Edit).
+    pub(crate) fn edit_target(&self) -> Option<EditTarget> {
+        // Every other mode owns the key: the comments list, the pickers, and the text fields.
         if self.mode != Mode::Normal {
             return None;
         }
-        // A live line selection is a gesture in progress, so `edit` is inert like the
-        // changeset steps and skips. A press must not abandon the range being selected.
+        // A live line selection is a gesture in progress. A press must not abandon the range.
         if self.select_anchor.is_some() {
             return None;
         }
-        if self.focus == Focus::Files {
+        let (path, line) = if self.focus == Focus::Files {
             // The selected navigator file at its start. A directory row names no file.
-            return Some((self.current_entry()?.path.clone(), 1));
-        }
-        // The open file, never the navigator's selection. The two diverge whenever a file was
-        // opened by path rather than by row, so pairing `shown_entry` with a line read from
-        // `visible` could name one file at another's line.
-        let path = self.diff_path.clone()?;
-        // A markdown preview paints rendered blocks, not numbered source rows, so the cursor
-        // names no line the reviewer can see and the file opens at its start.
-        if self.preview_active() {
-            return Some((path, 1));
-        }
-        // The read pane's line under the cursor. A deletion and a fold carry no worktree
-        // number of their own, so the nearest numbered row above names the line. A notice
-        // diff, binary or over budget, paints no rows at all and opens at the file's start,
-        // the same line the navigator names for it.
-        let line = self
-            .visible
-            .get(..=self.diff_cursor)
-            .and_then(|above| above.iter().rev().find_map(Row::new_no))
-            .unwrap_or(1);
-        Some((path, line))
+            (self.current_entry()?.path.clone(), 1)
+        } else {
+            // The open file, never the navigator's selection: the two diverge whenever a file
+            // was opened by path rather than by row.
+            let path = self.diff_path.clone()?;
+            // The nearest row at or above the cursor carrying a worktree line number. A
+            // deletion and a fold carry none, a preview paints no numbered rows, and a notice
+            // diff paints no rows at all, so each falls back to the file's start.
+            let line = (!self.preview_active())
+                .then(|| self.visible.get(..=self.diff_cursor))
+                .flatten()
+                .and_then(|above| above.iter().rev().find_map(Row::new_no))
+                .unwrap_or(1);
+            (path, line)
+        };
+        // A file the changeset says is gone opens nothing. The changeset is the source of
+        // truth here, never a `stat`: this runs on the render path, and one poll of staleness
+        // is stale, never wrong (`overview.md` Continuity).
+        let deleted = self.changed_annotation(&path).map(|a| a.change)
+            == Some(crate::model::ChangeKind::Deleted);
+        (!deleted).then_some(EditTarget { path, line })
     }
 
     fn edit_comment(&mut self) {
@@ -3995,7 +3970,7 @@ impl App {
                     pane_is_primary = true;
                     // A file row names a file `edit` can open; a directory row does not
                     // (`specs/input.md` Edit).
-                    if self.names_a_live_file() {
+                    if self.edit_target().is_some() {
                         out.push((A::EditFile, Do));
                     }
                 }
@@ -4033,11 +4008,11 @@ impl App {
 
         // `edit` opens the file wherever the read pane paints one and no comment claims the
         // key first. A commented line keeps `e edit` as its primary (`specs/input.md` Edit).
-        if self.focus == Focus::Diff
-            && self.diff_path.is_some()
-            && self.select_anchor.is_none()
-            && (self.preview_active() || self.comment_under_cursor().is_none())
-            && self.names_a_live_file()
+        // `edit` opens the file wherever it names one and no comment claims the key first
+        // (`specs/input.md` Edit). The same predicate the press uses, so the bar offers the
+        // key exactly where it works.
+        if (self.preview_active() || self.comment_under_cursor().is_none())
+            && self.edit_target().is_some()
         {
             out.push((A::EditFile, Do));
         }
@@ -4774,9 +4749,11 @@ mod tests {
     }
 
     /// A read pane showing `src/lib.rs`: an insertion at new line 10, a deletion of old line
-    /// 11, an insertion at new line 12. The cursor sits on the deletion.
+    /// 11, an insertion at new line 12. The cursor sits on the deletion, and the navigator has
+    /// one file row for the same file.
     fn edit_app() -> App {
         use crate::diff::{Row, Span};
+        use crate::file_list::{Row as ListRow, RowKind};
         let mut app = App::new(PathBuf::from("."), Scope::Uncommitted, None);
         app.entries.push(crate::file_list::Entry {
             path: "src/lib.rs".into(),
@@ -4785,6 +4762,12 @@ mod tests {
             ignored: false,
             is_dir: false,
         });
+        app.file_rows = vec![ListRow {
+            depth: 1,
+            name: "lib.rs".into(),
+            kind: RowKind::File { index: 0, annotation: None },
+            ignored: false,
+        }];
         app.diff_path = Some("src/lib.rs".into());
         app.focus = crate::Focus::Diff;
         let bare = Vec::<Span>::new;
@@ -4797,80 +4780,101 @@ mod tests {
         app
     }
 
+    /// Every state `edit` can be pressed in, and what it names there.
+    ///
+    /// The table is the enumeration: `edit_target` is one total function of the cursor, so a
+    /// state that is not a row here is a state nobody decided (`specs/input.md` Edit).
     #[test]
-    fn edit_names_the_read_pane_line_nearest_above_the_cursor() {
-        // A deletion carries no worktree number, so the nearest numbered row above names it.
-        let app = edit_app();
-        assert_eq!(app.edit_file_target(), Some(("src/lib.rs".into(), 10)));
+    fn edit_names_a_file_in_exactly_these_states() {
+        use super::{EditTarget, FooterAction};
+        use crate::file_list::RowKind;
+        let target = |path: &str, line: u32| Some(EditTarget { path: path.into(), line });
 
-        // On a numbered row the cursor's own line wins.
-        let mut app = edit_app();
-        app.diff_cursor = 2;
-        assert_eq!(app.edit_file_target(), Some(("src/lib.rs".into(), 12)));
+        #[allow(clippy::type_complexity)]
+        let cases: Vec<(&str, Box<dyn Fn(&mut App)>, Option<EditTarget>)> = vec![
+            (
+                "read pane, on an insertion",
+                Box::new(|a: &mut App| a.diff_cursor = 2),
+                target("src/lib.rs", 12),
+            ),
+            ("read pane, on a deletion", Box::new(|_: &mut App| {}), target("src/lib.rs", 10)),
+            (
+                "read pane, nothing numbered above",
+                Box::new(|a: &mut App| {
+                    a.visible.truncate(1);
+                    a.visible[0] = crate::diff::Row::Deletion {
+                        old_no: 3,
+                        spans: Vec::new(),
+                        emphasis: Vec::new(),
+                    };
+                    a.diff_cursor = 0;
+                }),
+                target("src/lib.rs", 1),
+            ),
+            (
+                "read pane, a notice diff with no rows",
+                Box::new(|a: &mut App| {
+                    a.visible.clear();
+                    a.diff_cursor = 0;
+                }),
+                target("src/lib.rs", 1),
+            ),
+            (
+                "read pane, a markdown preview",
+                Box::new(|a: &mut App| {
+                    a.preview_text = "# heading".into();
+                    a.preview = true;
+                }),
+                target("src/lib.rs", 1),
+            ),
+            ("read pane, no file open", Box::new(|a: &mut App| a.diff_path = None), None),
+            (
+                "navigator, on a file row",
+                Box::new(|a: &mut App| a.focus = crate::Focus::Files),
+                target("src/lib.rs", 1),
+            ),
+            (
+                "navigator, on a directory row",
+                Box::new(|a: &mut App| {
+                    a.focus = crate::Focus::Files;
+                    a.file_rows[0].kind = RowKind::Dir { path: "src".into(), expanded: true };
+                }),
+                None,
+            ),
+            (
+                "a file the changeset says is deleted",
+                Box::new(|a: &mut App| {
+                    a.changed.insert(
+                        "src/lib.rs".into(),
+                        crate::file_list::Annotation {
+                            change: crate::model::ChangeKind::Deleted,
+                            additions: 0,
+                            deletions: 2,
+                        },
+                    );
+                }),
+                None,
+            ),
+            ("a live line selection", Box::new(|a: &mut App| a.select_anchor = Some(0)), None),
+            ("the comments list", Box::new(|a: &mut App| a.mode = Mode::List), None),
+            ("the find band", Box::new(|a: &mut App| a.mode = Mode::Find), None),
+            ("the agent picker", Box::new(|a: &mut App| a.mode = Mode::Picker), None),
+            ("the base picker", Box::new(|a: &mut App| a.mode = Mode::BasePick), None),
+        ];
 
-        // With nothing numbered above, the file opens at its start rather than nowhere.
-        let mut app = edit_app();
-        app.visible =
-            vec![crate::diff::Row::Deletion { old_no: 3, spans: Vec::new(), emphasis: Vec::new() }];
-        app.diff_cursor = 0;
-        assert_eq!(app.edit_file_target(), Some(("src/lib.rs".into(), 1)));
-    }
-
-    #[test]
-    fn edit_names_a_notice_diff_at_its_start_from_either_pane() {
-        // A binary or over-budget file paints no rows, so the read pane has no line to read.
-        // It opens at the file's start rather than saying nothing while the navigator opens it.
-        use crate::file_list::{Row as ListRow, RowKind};
-        let mut app = edit_app();
-        app.visible.clear();
-        app.diff_cursor = 0;
-        assert_eq!(app.edit_file_target(), Some(("src/lib.rs".into(), 1)), "from the read pane");
-
-        app.focus = crate::Focus::Files;
-        app.file_rows = vec![ListRow {
-            depth: 1,
-            name: "lib.rs".into(),
-            kind: RowKind::File { index: 0, annotation: None },
-            ignored: false,
-        }];
-        assert_eq!(
-            app.edit_file_target(),
-            Some(("src/lib.rs".into(), 1)),
-            "the navigator names the same line, so the two panes agree"
-        );
-    }
-
-    #[test]
-    fn edit_names_the_selected_navigator_file_at_its_start() {
-        use crate::file_list::{Row as ListRow, RowKind};
-        let mut app = edit_app();
-        app.focus = crate::Focus::Files;
-        app.file_rows = vec![ListRow {
-            depth: 1,
-            name: "lib.rs".into(),
-            kind: RowKind::File { index: 0, annotation: None },
-            ignored: false,
-        }];
-        assert_eq!(app.edit_file_target(), Some(("src/lib.rs".into(), 1)));
-
-        // A directory row names no file.
-        app.file_rows[0].kind = RowKind::Dir { path: "src".into(), expanded: true };
-        assert_eq!(app.edit_file_target(), None, "a directory row is not editable");
-    }
-
-    #[test]
-    fn edit_is_inert_outside_normal_mode() {
-        // The comments list, the pickers, and the text fields keep their own meaning for the
-        // key, so no file is ever named from them (`specs/input.md` Edit).
-        for mode in [Mode::List, Mode::Find, Mode::Picker, Mode::BasePick] {
+        for (name, setup, expected) in cases {
             let mut app = edit_app();
-            app.mode = mode.clone();
-            assert_eq!(app.edit_file_target(), None, "{mode:?} owns the key");
+            setup(&mut app);
+            assert_eq!(app.edit_target(), expected, "{name}");
+            // The footer offers the key exactly where the press acts, by construction.
+            let offered = app.footer_bands().iter().any(|&(a, _)| a == FooterAction::EditFile);
+            assert_eq!(offered, expected.is_some(), "the footer disagrees with the press: {name}");
         }
     }
 
     #[test]
     fn a_commented_line_keeps_edit_for_its_comment() {
+        use super::EditTarget;
         let mut app = edit_app();
         app.store.add(crate::model::Comment {
             file: "src/lib.rs".into(),
@@ -4891,30 +4895,29 @@ mod tests {
         app.diff_cursor = 0;
         app.start_edit();
         assert!(!app.composing(), "no comment covers this row");
-        let request = app.editor_request.expect("so the same key names the file");
-        assert!(request.path.ends_with("src/lib.rs"));
-        assert_eq!(request.line, 10);
+        assert_eq!(
+            app.editor_request,
+            Some(EditTarget { path: "src/lib.rs".into(), line: 10 }),
+            "so the same key names the file"
+        );
     }
 
     #[test]
-    fn edit_reports_a_file_the_worktree_no_longer_holds() {
+    fn edit_from_the_navigator_ignores_a_comment_on_the_hidden_diff_cursor() {
         let mut app = edit_app();
-        app.entries[0].path = "gone/missing.rs".into();
-        app.diff_path = Some("gone/missing.rs".into());
+        app.store.add(crate::model::Comment {
+            file: "src/lib.rs".into(),
+            side: Side::New,
+            start: 10,
+            end: 10,
+            lines: "+x".into(),
+            text: "note".into(),
+            diff_anchored: true,
+        });
+        app.diff_cursor = 0;
+        app.focus = crate::Focus::Files;
         app.start_edit();
-        assert!(app.editor_request.is_none(), "a deleted file dispatches nothing");
-        assert_eq!(app.status, "no file here", "and says so rather than failing silently");
-    }
-
-    #[test]
-    fn edit_requests_a_file_that_exists_on_disk() {
-        let mut app = edit_app();
-        app.entries[0].path = "Cargo.toml".into();
-        app.diff_path = Some("Cargo.toml".into());
-        app.start_edit();
-        let request = app.editor_request.expect("a real file dispatches");
-        assert!(request.path.is_absolute(), "the editor is handed an absolute path");
-        assert!(request.path.ends_with("Cargo.toml"));
-        assert_eq!(request.line, 10);
+        assert!(!app.composing(), "the card is off screen, so it does not claim the key");
+        assert!(app.editor_request.is_some(), "the file row under the eye wins");
     }
 }

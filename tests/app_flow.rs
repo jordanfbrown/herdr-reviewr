@@ -812,7 +812,7 @@ fn the_footer_offers_edit_file_on_a_diff_with_no_rows() {
     let keymap = Keymap::default();
     press(&mut app, &keymap, KeyCode::Char('e'));
     let request = app.editor_request.expect("and the press opens it");
-    assert!(request.path.ends_with("blob.bin"));
+    assert_eq!(request.path, "blob.bin");
     assert_eq!(request.line, 1, "at its start, since no row names a line");
 }
 
@@ -837,7 +837,6 @@ fn the_footer_hides_edit_file_on_a_deleted_file() {
     let keymap = Keymap::default();
     press(&mut app, &keymap, KeyCode::Char('e'));
     assert!(app.editor_request.is_none(), "and the press opens nothing");
-    assert_eq!(app.status, "no file here", "saying so rather than failing silently");
 
     app.focus = Focus::Files;
     assert!(
@@ -856,8 +855,7 @@ fn edit_opens_the_file_under_the_cursor_and_the_comment_when_one_is_there() {
     // `e` on an uncommented line names the worktree file, at that line, absolutely.
     press(&mut app, &keymap, KeyCode::Char('e'));
     let request = app.editor_request.take().expect("`e` names the file under the cursor");
-    assert!(request.path.is_absolute(), "the editor is handed an absolute path");
-    assert!(request.path.ends_with("a.rs"));
+    assert_eq!(request.path, "a.rs");
     assert!(!app.composing(), "and no comment box opens");
 
     // The same key on a commented line edits the comment instead.
@@ -871,7 +869,7 @@ fn edit_opens_the_file_under_the_cursor_and_the_comment_when_one_is_there() {
     app.focus = Focus::Files;
     press(&mut app, &keymap, KeyCode::Char('e'));
     let from_row = app.editor_request.take().expect("a file row names its file");
-    assert!(from_row.path.ends_with("a.rs"));
+    assert_eq!(from_row.path, "a.rs");
     assert_eq!(from_row.line, 1, "a navigator row names no line, so the file opens at its start");
 }
 
@@ -922,8 +920,9 @@ fn the_diff_shows_an_edit_made_in_the_editor_after_the_refresh() {
     let target = app.editor_request.take().expect("`e` names the open file");
 
     // Stand in for the editor: write the file the way it was handed to one.
-    let body = std::fs::read_to_string(&target.path).unwrap();
-    std::fs::write(&target.path, format!("{body}sixth-line-from-the-editor\n")).unwrap();
+    let on_disk = r.path().join(&target.path);
+    let body = std::fs::read_to_string(&on_disk).unwrap();
+    std::fs::write(&on_disk, format!("{body}sixth-line-from-the-editor\n")).unwrap();
 
     let text = |a: &App| {
         a.visible

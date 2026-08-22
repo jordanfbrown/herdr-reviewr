@@ -49,11 +49,11 @@ use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, MouseButton,
     MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
-use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
     supports_keyboard_enhancement,
 };
+use ratatui::crossterm::{cursor, execute};
 use ratatui::layout::Rect;
 
 use crate::app::{App, Focus, Mode};
@@ -83,7 +83,7 @@ pub fn run() -> Result<()> {
     // notably Ctrl/Alt+arrows — so word-jump by arrow works where the terminal supports it.
     let kbd = supports_keyboard_enhancement().unwrap_or(false);
     logln!("keyboard enhancement supported={kbd}");
-    enter_terminal_modes(kbd);
+    claim_terminal(kbd);
     // Render before the first load, so a slow, failing, or hung `git` scan shows the reviewr UI
     // instead of the blank pane herdr leaves when the process blocks or exits before it renders
     // (issue #4). Paint the empty frame first; then the initial load, non-fatal — an error
@@ -139,13 +139,22 @@ pub fn run() -> Result<()> {
     result
 }
 
-/// Claim the terminal input modes the event loop reads. The mirror of [`restore_terminal`], so
-/// startup and a resume after the editor rebuild exactly the same stack (`specs/input.md` Edit).
+/// Claim every terminal mode the event loop reads. The exact inverse of [`release_terminal`],
+/// so startup and a resume after an external program rebuild one stack, not two lists that
+/// drift apart (`specs/input.md` Edit).
 ///
-/// Bracketed paste so a multi-line paste arrives as one event, not raw keystrokes whose embedded
-/// newlines would submit the comment early.
-fn enter_terminal_modes(kbd: bool) {
-    let _ = execute!(io::stdout(), EnableMouseCapture, EnableBracketedPaste);
+/// Bracketed paste so a multi-line paste arrives as one event, not raw keystrokes whose
+/// embedded newlines would submit the comment early. The kitty keyboard protocol reports
+/// modifiers on keys the legacy encoding drops, most notably Ctrl/Alt+arrows.
+fn claim_terminal(kbd: bool) {
+    let _ = enable_raw_mode();
+    let _ = execute!(
+        io::stdout(),
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste,
+        cursor::Hide
+    );
     if kbd {
         let _ = execute!(
             io::stdout(),
@@ -154,18 +163,48 @@ fn enter_terminal_modes(kbd: bool) {
     }
 }
 
-/// Release the modes [`enter_terminal_modes`] claimed, in reverse.
-fn leave_terminal_modes(kbd: bool) {
+/// Release everything [`claim_terminal`] claimed, in reverse, leaving a plain terminal another
+/// program can own outright.
+fn release_terminal(kbd: bool) {
     if kbd {
         let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
     }
-    let _ = execute!(io::stdout(), DisableMouseCapture, DisableBracketedPaste);
+    let _ = execute!(
+        io::stdout(),
+        DisableBracketedPaste,
+        DisableMouseCapture,
+        cursor::Show,
+        LeaveAlternateScreen
+    );
+    let _ = disable_raw_mode();
 }
 
 /// Leave the alternate screen and release terminal input modes before any bounded worker drain.
 fn restore_terminal(kbd: bool) {
-    leave_terminal_modes(kbd);
+    release_terminal(kbd);
     ratatui::restore();
+}
+
+/// Take back the input stream an external program left behind.
+///
+/// Its exit can leave bytes queued, and its own teardown terminal queries answer in exactly
+/// those bytes, so anything still buffered belongs to it and not to the review. A resize is the
+/// terminal's rather than the program's, so it is answered instead of dropped.
+///
+/// The timeout is non-zero because `event::poll(Duration::ZERO)` never polls the terminal in
+/// crossterm 0.29: a zero leftover exits its read loop before it looks at the file descriptor,
+/// so only events parsed earlier would be seen. The deadline bounds a terminal that keeps
+/// talking.
+fn drain_input(app: &mut App) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_millis(50);
+    let mut resized = false;
+    while Instant::now() < deadline && event::poll(Duration::from_millis(5))? {
+        resized |= matches!(event::read(), Ok(Event::Resize(_, _)));
+    }
+    if resized {
+        handle_resize(app);
+    }
+    Ok(())
 }
 
 /// Service one `edit` request that named a file (`specs/input.md` Edit).
@@ -180,11 +219,16 @@ fn run_editor(
     kbd: bool,
 ) -> Result<()> {
     let Some(target) = app.editor_request.take() else { return Ok(()) };
+    // Absolute, so no editor can read the file name as one of its own flags and no dialect
+    // needs a `--` guard (`src/editor.rs`). `absolute` keeps symlinks, unlike canonicalize, so
+    // a worktree reached through one opens under the name the reviewer knows.
+    let joined = app.repo.join(&target.path);
+    let path = std::path::absolute(&joined).unwrap_or(joined);
     let Some(command) = editor::resolve(
         configured,
         std::env::var("VISUAL").ok().as_deref(),
         std::env::var("EDITOR").ok().as_deref(),
-        &target.path,
+        &path,
         target.line,
     ) else {
         app.status = "set `editor` in the plugin config, or $EDITOR".into();
@@ -197,48 +241,17 @@ fn run_editor(
     let mut cmd = proc::command(&command.program);
     cmd.args(&command.args);
 
-    // Mouse reporting goes off below, so a button still held now would never report its
-    // release. A text or gutter gesture would hold the open view's reloads
-    // (`specs/text-selection.md`), and a divider drag left cancelled would swallow every
-    // later left-drag. Both end here.
-    app.cancel_gesture();
-    app.finish_divider_drag();
-    // No motion arrives while the editor runs either, so the hover affordance would repaint
-    // from a cell the pointer has almost certainly left.
-    app.hover = None;
-
-    leave_terminal_modes(kbd);
-    // Every Normal-mode frame hides the cursor, so the editor would inherit a terminal without
-    // one. The next draw hides it again unconditionally.
-    let _ = execute!(io::stdout(), LeaveAlternateScreen, ratatui::crossterm::cursor::Show);
-    let _ = disable_raw_mode();
+    app.forget_pointer();
+    release_terminal(kbd);
 
     let launched = cmd.status();
 
-    let _ = enable_raw_mode();
-    let _ = execute!(io::stdout(), EnterAlternateScreen);
-    enter_terminal_modes(kbd);
-    // The editor's own exit can leave keystrokes queued; they belong to it, not to the review.
-    // A resize is the terminal's, not the editor's, so it still has to be answered: the pane
-    // may have reflowed under a settled highlight while the editor owned the screen.
-    // A non-zero timeout, because `event::poll(Duration::ZERO)` never polls the terminal in
-    // crossterm 0.29: a zero leftover exits its read loop before it looks at the fd, so only
-    // events parsed before the editor ran would be seen. Undrained bytes reach the loop as
-    // review commands, and an editor's teardown queries answer in exactly those bytes. The
-    // deadline bounds a terminal that keeps talking.
-    let drain_until = Instant::now() + Duration::from_millis(50);
-    let mut resized = false;
-    while Instant::now() < drain_until && event::poll(Duration::from_millis(5))? {
-        resized |= matches!(event::read(), Ok(Event::Resize(_, _)));
-    }
-    if resized {
-        handle_resize(app);
-    }
+    claim_terminal(kbd);
+    drain_input(app)?;
 
     match launched {
         Ok(status) if status.success() => {
-            let shown = target.path.strip_prefix(&app.repo).unwrap_or(&target.path);
-            app.status = format!("edited {}", shown.display());
+            app.status = format!("edited {}", target.path);
             app.request_world_refresh(true, false);
             app.refresh_commanded = true;
         }

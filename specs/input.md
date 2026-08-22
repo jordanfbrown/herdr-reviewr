@@ -110,18 +110,38 @@ The steps and the skips share the rest:
 
 ### Edit
 
-`edit` acts on what the cursor names. On a commented line it opens that comment for editing. Everywhere else it opens the file in the reviewer's editor, and reviewr suspends while the editor owns the pane.
+`edit` acts on what the cursor names: the comment when one is there, the file otherwise. The
+editor takes the pane, and reviewr returns to the same place when it exits.
 
-- In the read pane the open file opens at the line under the cursor, never the navigator's selection, which can name a different file. A deletion and a fold carry no worktree line, so the nearest numbered row above names it.
-- On a file row in the navigator, and in a markdown preview, the file opens at line 1.
-- `edit` is inert on a directory row, and while a line selection is live, so a press cannot abandon the range being selected. The comments list still edits its highlighted comment, and the comment editor, the agent picker, the base picker, the find band, and the search screen keep the key as text or as their own action.
+The following table is every state `edit` can be pressed in. A state it does not name is a
+state nobody decided.
+
+| cursor on                                  | `edit` opens                                     |
+| ------------------------------------------ | ------------------------------------------------ |
+| a commented line, card on screen           | that comment, for editing                        |
+| any other read-pane line                   | the open file at that line                       |
+| a deletion or a fold                       | the open file at the nearest numbered line above |
+| a markdown preview                         | the open file at line 1                          |
+| a diff with no rows                        | the open file at line 1                          |
+| a file row in the navigator                | that file at line 1                              |
+| a directory row                            | nothing                                          |
+| a file the changeset calls deleted         | nothing                                          |
+| a live line selection                      | nothing                                          |
+| the comments list                          | the highlighted comment, for editing             |
+| the comment editor, find band, or a picker | nothing, the key is theirs                       |
+| the search screen                          | nothing, the key types into the query            |
+| the `PR` tab                               | nothing, it names no file                        |
+
+The footer offers `e edit file` exactly on the rows that open a file, and never elsewhere.
+
 - The editor command is the `editor` config key (`config.md`). With neither that key nor `$VISUAL` nor `$EDITOR` set, the press names what to set and opens nothing. reviewr never guesses an editor.
 - The editor's own name picks its arguments. Four spellings cover the editors reviewr knows: `+LINE path` for the vi family, nano, micro, kakoune, emacs, BBEdit, and gedit, `path:LINE` for helix, Zed, and Sublime Text, `-g path:LINE` for the VS Code family and its forks, and `--line LINE path` for the JetBrains family, Xcode, Kate, and TextMate. A name reviewr does not know opens the file without a line.
 - A graphical editor returns as soon as it hands the file to a running window, so reviewr adds its wait flag. A command that already carries that flag, in either spelling, gets no second one. A terminal editor holds the pane already and gets none.
-- The path reviewr passes is absolute, so no file name reads as a flag. A notice diff paints no rows, so it opens at the file's start, the same line the navigator names for it.
+- The path reviewr passes is absolute, so no file name reads as a flag.
+- The pane releases every terminal mode it holds and claims them all back afterwards, so the editor owns a plain terminal and the review returns to the one it left. Input the editor left buffered is discarded, since its own teardown queries answer in those bytes. A terminal resize meanwhile is answered rather than discarded.
+- Pointer state is forgotten at the press. Mouse reporting stops while the editor runs, so no release ends a drag and no motion moves the hover off the cell it was painted on (`text-selection.md`, `tui.md`).
 - Returning restores the open file, the cursor, the scroll, the folds, and the footer's expansion.
 - A finished edit refreshes the changeset and samples the turn, so tracking resumes without waiting for the next poll. A turn that both began and ended while the editor held the loop is missed like any turn shorter than a poll (`herdr-host.md`). The diff reconciles in place (`overview.md` Continuity).
-- A live mouse gesture and a divider drag both end at the press, because mouse reporting stops while the editor runs and neither release would arrive (`text-selection.md`, `tui.md`).
 
 The editor writes, never reviewr (`overview.md`). An edit made while an agent's turn is open joins that turn's diff, so `last-turn` shows the reviewer's own change beside the agent's (`herdr-host.md`).
 
