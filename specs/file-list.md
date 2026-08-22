@@ -1,7 +1,7 @@
 ---
 Status: Current
 Created: 2026-06-24
-Last edited: 2026-07-18
+Last edited: 2026-08-22
 ---
 
 # File list
@@ -13,28 +13,28 @@ The file navigator: a directory tree that opens a file in the read pane. It list
 The list groups files into a collapsible tree. A file row shows a change marker, its name, and its add/remove stats.
 
 ```
- src/
-   M app.rs                    +562 −16
-   A diff_view.rs              +210
-   M ui.rs                     +437 −9
- specs/
-   A diff-view.md              +96
-   M …/2026-06-23-changes/plan +4 −2
- M  Cargo.toml                 +11 −1
- ?  herdr-plugin.toml          +25
+▾ src/
+  M app.rs                    +562 −16
+  A diff_view.rs              +210
+  M ui.rs                     +437 −9
+▾ specs/
+  A diff-view.md              +96
+  M …/2026-06-23-changes/plan +4 −2
+M Cargo.toml                  +11 −1
+? herdr-plugin.toml           +25
 ```
 
 In `All files` the same navigator lists the whole worktree: tracked, untracked, and ignored alike. Ignored rows render dimmed. `.git` is the one exclusion. A file the active scope changed keeps its marker and stats. The rest show name only.
 
 ```
- src/
-   M app.rs                    +562 −16
-     diff.rs
-   M ui.rs                     +437 −9
- specs/
-     overview.md
- target/                       (ignored — dimmed, one collapsed row)
- Cargo.toml
+▾ src/
+  M app.rs                    +562 −16
+    diff.rs
+  M ui.rs                     +437 −9
+▾ specs/
+    overview.md
+▸ target/                       (ignored — dimmed, one collapsed row)
+  Cargo.toml
 ```
 
 ### Node
@@ -75,6 +75,8 @@ The list is a flat sequence of visible rows over the tree.
 - Switching scope re-marks the `All files` tree in place. Only the markers and stats change.
 
 ### Presentation
+
+Each nesting level indents two spaces. A directory row leads with `▾` when open and `▸` when shut. An unchanged file has no marker. It adds two spaces after the indent. Its name then lines up with a sibling directory. A child sits to the right of its parent.
 
 - A file row is `<marker> <name> <stats>`: the marker colored by kind, the basename bright, parent directories dimmed, stats right-aligned.
 - Stats read `+added −removed`: additions green, deletions red, a zero side dropped. A change with no countable lines (a binary file) shows no stats.

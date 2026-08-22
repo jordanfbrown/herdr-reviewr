@@ -15,6 +15,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Sublime, the JetBrains IDEs, and others want their line number. The new `editor` config key takes
   a `{file}`/`{line}` template for anything else. Shaped by @trsxxii (#33) and @jorgerojas26 (#79).
 
+## [0.34.1] — 2026-08-22
+
+### Fixed
+- **Opened directories nest their children.** Expanding a folder in the file navigator
+  lined child names up with the folder name: an unchanged file has no change marker, and
+  the indent was exactly the chevron's width. Those rows now keep the chevron's two
+  columns empty so names sit under the parent.
+
 ## [0.34.0] — 2026-08-20
 
 ### Added

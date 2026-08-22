@@ -1505,7 +1505,7 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
         .map(|(i, row)| {
             // The selected row fills with the cursor color, dimmed when the list is unfocused.
             let fill = (i == app.file_cursor).then(|| p.cursor_bg(app.focus == Focus::Files));
-            let indent = "  ".repeat(row.depth);
+            let nest = "  ".repeat(row.depth);
             match &row.kind {
                 RowKind::Dir { expanded, .. } => {
                     let arrow = if *expanded { "▾ " } else { "▸ " };
@@ -1516,23 +1516,28 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
                         Style::default().fg(p.dim0).add_modifier(Modifier::BOLD)
                     };
                     let spans = vec![
-                        Span::styled(format!("{indent}{arrow}"), Style::default().fg(p.dim2)),
+                        Span::styled(format!("{nest}{arrow}"), Style::default().fg(p.dim2)),
                         Span::styled(format!("{}/", row.name), name_style),
                     ];
                     selectable_row(p, spans, width, fill)
                 }
-                RowKind::File { annotation, .. } => file_row_item(
-                    &FileRowSpec {
-                        indent: &indent,
-                        annotation: annotation.as_ref(),
-                        name: &row.name,
-                        ignored: row.ignored,
-                        emphasis: &[],
-                    },
-                    width,
-                    fill,
-                    p,
-                ),
+                RowKind::File { annotation, .. } => {
+                    // Unchanged files have no marker. Two spaces hold the chevron's
+                    // column so the name lines up with a sibling directory (file-list.md).
+                    let indent = if annotation.is_some() { nest } else { format!("{nest}  ") };
+                    file_row_item(
+                        &FileRowSpec {
+                            indent: &indent,
+                            annotation: annotation.as_ref(),
+                            name: &row.name,
+                            ignored: row.ignored,
+                            emphasis: &[],
+                        },
+                        width,
+                        fill,
+                        p,
+                    )
+                }
             }
         })
         .collect();
