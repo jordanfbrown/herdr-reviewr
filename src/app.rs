@@ -2984,6 +2984,11 @@ impl App {
     /// `Some`, so the two cannot disagree, and no surface can be reached without passing
     /// through here (`specs/input.md` Edit).
     pub(crate) fn edit_target(&self) -> Option<EditTarget> {
+        // The `PR` tab names no file of its own, and the open diff behind it belongs to a
+        // file tab the reviewer left.
+        if !self.tab.is_file_tab() {
+            return None;
+        }
         // Every other mode owns the key: the comments list, the pickers, and the text fields.
         if self.mode != Mode::Normal {
             return None;
@@ -4786,7 +4791,7 @@ mod tests {
     /// state that is not a row here is a state nobody decided (`specs/input.md` Edit).
     #[test]
     fn edit_names_a_file_in_exactly_these_states() {
-        use super::{EditTarget, FooterAction};
+        use super::{EditTarget, FooterAction, Tab};
         use crate::file_list::RowKind;
         let target = |path: &str, line: u32| Some(EditTarget { path: path.into(), line });
 
@@ -4857,6 +4862,8 @@ mod tests {
             ),
             ("a live line selection", Box::new(|a: &mut App| a.select_anchor = Some(0)), None),
             ("the comments list", Box::new(|a: &mut App| a.mode = Mode::List), None),
+            ("the search screen", Box::new(|a: &mut App| a.mode = Mode::Search), None),
+            ("the `PR` tab", Box::new(|a: &mut App| a.tab = Tab::Pr), None),
             ("the find band", Box::new(|a: &mut App| a.mode = Mode::Find), None),
             ("the agent picker", Box::new(|a: &mut App| a.mode = Mode::Picker), None),
             ("the base picker", Box::new(|a: &mut App| a.mode = Mode::BasePick), None),
