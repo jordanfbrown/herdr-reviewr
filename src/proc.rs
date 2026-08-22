@@ -44,6 +44,25 @@ pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
     cmd
 }
 
+/// Resolve `program` the way the reviewer's own shell would: their `PATH` first, the common
+/// host bins only as a fallback.
+///
+/// The opposite order from [`command`], and deliberately. `git` and the forge CLIs are the
+/// host's tools, so a stripped pane PATH must not hide them. The editor is the reviewer's own,
+/// so a version-managed shim on their `PATH` has to win over a stale copy in a common bin
+/// (`specs/input.md` Edit). The child still gets the host PATH, so whatever it launches
+/// resolves like everything else.
+pub(crate) fn user_command(program: impl AsRef<OsStr>) -> Command {
+    let program = program.as_ref();
+    let path = host_path();
+    let resolved = env::var_os("PATH")
+        .and_then(|inherited| resolve_on(&inherited, program))
+        .or_else(|| resolve_on(&path, program));
+    let mut cmd = resolved.map_or_else(|| Command::new(program), Command::new);
+    cmd.env("PATH", path);
+    cmd
+}
+
 /// Whether `name` resolves to an executable on the host PATH — a dependency-free `which`. Both
 /// shipped platforms are unix, so a file in a host-PATH directory is the executable. Shared by
 /// the clipboard probe (`export.rs`) and the URL-opener probe (`browser.rs`).

@@ -2967,6 +2967,11 @@ impl App {
     /// `edit`: the comment under the cursor, else the file the cursor names
     /// (`specs/input.md` Edit). One key, resolved by what is actually there.
     pub fn start_edit(&mut self) {
+        // A live line selection is a gesture in progress. Neither branch may abandon the
+        // range, and the footer names neither key here (`specs/input.md` Edit).
+        if self.select_anchor.is_some() {
+            return;
+        }
         if self.comment_claims_edit() {
             self.edit_comment();
             return;
@@ -4022,8 +4027,14 @@ impl App {
         // key first. A commented line keeps `e edit` as its primary (`specs/input.md` Edit).
         // `edit` offers the file wherever the press would open one, asked once for every
         // surface so the bar can neither miss a row nor name one twice (`specs/input.md` Edit).
+        // It sits ahead of the navigator's own keys: a narrow row trims trailing actions
+        // first, and the file is worth more there than the hide key.
         if self.edit_opens_a_file() {
-            out.push((A::EditFile, Do));
+            let at = out
+                .iter()
+                .position(|&(a, band)| band == Do && a == A::NavigatorHide)
+                .unwrap_or(out.len());
+            out.insert(at, (A::EditFile, Do));
         }
 
         // An armed crossing leads row 1: nothing else on screen says the next press leaves the
@@ -4915,6 +4926,28 @@ mod tests {
             Some(EditTarget { path: "src/lib.rs".into(), line: 10 }),
             "so the same key names the file"
         );
+    }
+
+    #[test]
+    fn a_live_selection_freezes_both_branches_of_edit() {
+        let mut app = edit_app();
+        app.store.add(crate::model::Comment {
+            file: "src/lib.rs".into(),
+            side: Side::New,
+            start: 12,
+            end: 12,
+            lines: "+x".into(),
+            text: "note".into(),
+            diff_anchored: true,
+        });
+        app.diff_cursor = 2;
+        app.toggle_select();
+        assert!(app.select_anchor.is_some(), "v starts a selection on a commented line");
+
+        app.start_edit();
+        assert!(!app.composing(), "the comment branch must not fire either");
+        assert!(app.editor_request.is_none());
+        assert!(app.select_anchor.is_some(), "and the range survives the press");
     }
 
     #[test]

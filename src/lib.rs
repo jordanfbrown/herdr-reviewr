@@ -83,7 +83,9 @@ pub fn run() -> Result<()> {
     // notably Ctrl/Alt+arrows — so word-jump by arrow works where the terminal supports it.
     let kbd = supports_keyboard_enhancement().unwrap_or(false);
     logln!("keyboard enhancement supported={kbd}");
-    claim_terminal(kbd);
+    // `ratatui::init` already claimed the alternate screen and raw mode, so only the input
+    // modes are left to claim here.
+    claim_input_modes(kbd);
     // Render before the first load, so a slow, failing, or hung `git` scan shows the reviewr UI
     // instead of the blank pane herdr leaves when the process blocks or exits before it renders
     // (issue #4). Paint the empty frame first; then the initial load, non-fatal — an error
@@ -139,22 +141,13 @@ pub fn run() -> Result<()> {
     result
 }
 
-/// Claim every terminal mode the event loop reads. The exact inverse of [`release_terminal`],
-/// so startup and a resume after an external program rebuild one stack, not two lists that
-/// drift apart (`specs/input.md` Edit).
+/// Claim the input modes the event loop reads, on a screen something else already owns.
 ///
 /// Bracketed paste so a multi-line paste arrives as one event, not raw keystrokes whose
 /// embedded newlines would submit the comment early. The kitty keyboard protocol reports
 /// modifiers on keys the legacy encoding drops, most notably Ctrl/Alt+arrows.
-fn claim_terminal(kbd: bool) {
-    let _ = enable_raw_mode();
-    let _ = execute!(
-        io::stdout(),
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        EnableBracketedPaste,
-        cursor::Hide
-    );
+fn claim_input_modes(kbd: bool) {
+    let _ = execute!(io::stdout(), EnableMouseCapture, EnableBracketedPaste, cursor::Hide);
     if kbd {
         let _ = execute!(
             io::stdout(),
@@ -163,25 +156,37 @@ fn claim_terminal(kbd: bool) {
     }
 }
 
-/// Release everything [`claim_terminal`] claimed, in reverse, leaving a plain terminal another
-/// program can own outright.
-fn release_terminal(kbd: bool) {
+/// Release what [`claim_input_modes`] claimed, in reverse.
+fn release_input_modes(kbd: bool) {
     if kbd {
         let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
     }
-    let _ = execute!(
-        io::stdout(),
-        DisableBracketedPaste,
-        DisableMouseCapture,
-        cursor::Show,
-        LeaveAlternateScreen
-    );
+    let _ = execute!(io::stdout(), DisableBracketedPaste, DisableMouseCapture, cursor::Show);
+}
+
+/// Claim the screen as well as the input modes. The exact inverse of [`release_terminal`], for
+/// the one caller that hands the whole terminal to another program and takes it back
+/// (`specs/input.md` Edit).
+///
+/// Startup does not use this pair: `ratatui::init` already owns the alternate screen and raw
+/// mode there, and claiming either twice is not the no-op it looks like.
+fn claim_terminal(kbd: bool) {
+    let _ = enable_raw_mode();
+    let _ = execute!(io::stdout(), EnterAlternateScreen);
+    claim_input_modes(kbd);
+}
+
+/// Release everything [`claim_terminal`] claimed, leaving a plain terminal another program can
+/// own outright.
+fn release_terminal(kbd: bool) {
+    release_input_modes(kbd);
+    let _ = execute!(io::stdout(), LeaveAlternateScreen);
     let _ = disable_raw_mode();
 }
 
 /// Leave the alternate screen and release terminal input modes before any bounded worker drain.
 fn restore_terminal(kbd: bool) {
-    release_terminal(kbd);
+    release_input_modes(kbd);
     ratatui::restore();
 }
 
@@ -236,9 +241,10 @@ fn run_editor(
         return Ok(());
     };
     logln!("editor run {} {:?}", command.program, command.args);
-    // A herdr pane may launch with a stripped PATH, so the binary resolves through the same
-    // common locations every other host tool does (`specs/herdr-host.md`).
-    let mut cmd = proc::command(&command.program);
+    // The reviewer's own PATH first, so a version-managed editor wins over a stale copy in a
+    // common bin, with the host locations as the fallback a stripped pane PATH needs
+    // (`src/proc.rs`, `specs/herdr-host.md`).
+    let mut cmd = proc::user_command(&command.program);
     cmd.args(&command.args).current_dir(&app.repo);
 
     app.forget_pointer();
