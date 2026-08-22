@@ -47,11 +47,12 @@ def make_repo(root):
     return path
 
 
-def make_editor(bindir, argv_log, name):
+def make_editor(bindir, argv_log, name, holds=0):
     """A scripted `$EDITOR` under a real editor's name, so its dialect resolves.
 
     Records its argv, writes to the file, and prints to the terminal. It lives outside the
-    repository, or reviewr would list it as an untracked change and open it instead.
+    repository, or reviewr would list it as an untracked change and open it instead. `holds`
+    seconds stand in for the time a reviewer spends with the file open.
     """
     os.makedirs(bindir, exist_ok=True)
     script = os.path.join(bindir, name)
@@ -66,6 +67,7 @@ def make_editor(bindir, argv_log, name):
             'for a in "$@"; do last="$a"; done\n'
             'printf "%s\\n" "${last%%:*}" > /dev/null\n'
             f'printf "{EDITED_LINE}\\n" >> "${{last%%:*}}"\n'
+            f"sleep {holds}\n"
             "exit 0\n"
         )
     os.chmod(script, 0o755)
@@ -193,8 +195,10 @@ def main():
 
         # A graphical editor takes a different dialect and must be made to block, or the pane
         # repaints before the reviewer has typed anything.
+        # It holds the file the way a reviewer does, so the checks below run against a pane
+        # with an editor still open.
         gui_log = os.path.join(home, "argv-gui.txt")
-        gui = make_editor(bindir, gui_log, "code")
+        gui = make_editor(bindir, gui_log, "code", holds=4)
         s = Session(binary, root, gui)
         s.drain()
         gui_mark = len(s.seen)
@@ -214,6 +218,16 @@ def main():
         check("and takes its line as --goto path:line",
               "-g" in gui_argv and bool(gui_argv) and ":" in gui_argv[-1],
               f"argv={gui_argv}")
+        # The whole point of keeping the pane: it has to still work. The editor is holding
+        # the file right now, so a keypress that repaints proves the loop was never blocked.
+        check("the pane answers keys while the editor holds the file", len(s.press("j")) > 0)
+        # Putting the file down is what refreshes: the status names the edit without the
+        # reviewer touching the pane.
+        # The pane repaints while it watches, so read until the status turns over.
+        deadline = time.perf_counter() + 15
+        while b"edited" not in s.seen[gui_mark:] and time.perf_counter() < deadline:
+            s.drain(quiet=0.3, timeout=2.0)
+        check("closing the file reports the edit", b"edited" in s.seen[gui_mark:])
         s.press("q")
         s.close()
 

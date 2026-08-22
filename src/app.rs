@@ -3008,33 +3008,38 @@ impl App {
         if self.mode != Mode::Normal {
             return None;
         }
-        // A live line selection is a gesture in progress. A press must not abandon the range.
-        if self.select_anchor.is_some() {
-            return None;
-        }
-        let (path, line) = if self.focus == Focus::Files {
+        let (path, numbered) = if self.focus == Focus::Files {
             // The selected navigator file at its start. A directory row names no file.
-            (self.current_entry()?.path.clone(), 1)
+            (self.current_entry()?.path.clone(), false)
         } else {
+            // A live line selection is a gesture in progress on the diff, and a press must not
+            // abandon the range. The navigator's own row is untouched by it
+            // (`specs/input.md` Edit).
+            if self.select_anchor.is_some() {
+                return None;
+            }
             // The open file, never the navigator's selection: the two diverge whenever a file
-            // was opened by path rather than by row.
-            let path = self.diff_path.clone()?;
-            // The nearest row at or above the cursor carrying a worktree line number. A
-            // deletion and a fold carry none, a preview paints no numbered rows, and a notice
-            // diff paints no rows at all, so each falls back to the file's start.
-            let line = (!self.preview_active())
-                .then(|| self.visible.get(..=self.diff_cursor))
-                .flatten()
-                .and_then(|above| above.iter().rev().find_map(Row::new_no))
-                .unwrap_or(1);
-            (path, line)
+            // was opened by path rather than by row. A preview paints no numbered rows.
+            (self.diff_path.clone()?, !self.preview_active())
         };
         // A file the changeset says is gone opens nothing. The changeset is the source of
         // truth here, never a `stat`: this runs on the render path, and one poll of staleness
-        // is stale, never wrong (`overview.md` Continuity).
-        let deleted = self.changed_annotation(&path).map(|a| a.change)
-            == Some(crate::model::ChangeKind::Deleted);
-        (!deleted).then_some(EditTarget { path, line })
+        // is stale, never wrong (`overview.md` Continuity). Asked before the line is looked
+        // for, since that search is the only unbounded work here.
+        if self.changed_annotation(&path).map(|a| a.change)
+            == Some(crate::model::ChangeKind::Deleted)
+        {
+            return None;
+        }
+        // The nearest row at or above the cursor carrying a worktree line number. A deletion
+        // and a fold carry none, and a notice diff paints no rows at all, so each falls back
+        // to the file's start.
+        let line = numbered
+            .then(|| self.visible.get(..=self.diff_cursor))
+            .flatten()
+            .and_then(|above| above.iter().rev().find_map(Row::new_no))
+            .unwrap_or(1);
+        Some(EditTarget { path, line })
     }
 
     fn edit_comment(&mut self) {
@@ -4873,7 +4878,19 @@ mod tests {
                 }),
                 None,
             ),
-            ("a live line selection", Box::new(|a: &mut App| a.select_anchor = Some(0)), None),
+            (
+                "a live line selection on the diff",
+                Box::new(|a: &mut App| a.select_anchor = Some(0)),
+                None,
+            ),
+            (
+                "a live line selection, from the navigator",
+                Box::new(|a: &mut App| {
+                    a.select_anchor = Some(0);
+                    a.focus = crate::Focus::Files;
+                }),
+                target("src/lib.rs", 1),
+            ),
             ("the comments list", Box::new(|a: &mut App| a.mode = Mode::List), None),
             ("the search screen", Box::new(|a: &mut App| a.mode = Mode::Search), None),
             ("the `PR` tab", Box::new(|a: &mut App| a.tab = Tab::Pr), None),

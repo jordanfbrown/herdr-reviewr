@@ -219,11 +219,44 @@ fn drain_input(app: &mut App) -> Result<()> {
 /// The pane suspends down to a plain terminal, so the editor owns it outright, then rebuilds the
 /// same mode stack and repaints. The file may have changed on disk, so a world refresh reconciles
 /// the diff in place (`overview.md` Continuity). reviewr itself still writes nothing.
+/// A graphical editor whose window is open on the reviewer's screen.
+///
+/// reviewr never waits on one. Its wait flag returns only when the reviewer closes the file,
+/// and the pane has to answer keys for the whole time they spend editing
+/// (`specs/input.md` Edit).
+struct OpenEditor {
+    child: std::process::Child,
+    path: String,
+}
+
+/// Collect the graphical editors that have closed since the last pass.
+///
+/// Every launched child is waited on exactly here, so none is left unreaped, and the close is
+/// what refreshes the changeset: the reviewer sees their edit the moment they put the file
+/// down (`specs/input.md` Edit).
+fn reap_editors(open: &mut Vec<OpenEditor>, app: &mut App) {
+    let mut closed = None;
+    open.retain_mut(|editor| {
+        // A wait that errors is a child reviewr can no longer account for, and holding it
+        // would only leak the slot: treat it as closed.
+        if matches!(editor.child.try_wait(), Ok(None)) {
+            return true;
+        }
+        closed = Some(std::mem::take(&mut editor.path));
+        false
+    });
+    let Some(path) = closed else { return };
+    app.status = format!("edited {path}");
+    app.request_world_refresh(false, false);
+    app.refresh_commanded = true;
+}
+
 fn run_editor(
     terminal: &mut DefaultTerminal,
     app: &mut App,
     configured: Option<&str>,
     kbd: bool,
+    open: &mut Vec<OpenEditor>,
 ) -> Result<()> {
     let Some(target) = app.editor_request.take() else { return Ok(()) };
     // Absolute, so no editor can read the file name as one of its own flags and no dialect
@@ -249,28 +282,36 @@ fn run_editor(
     let mut cmd = proc::user_command(&command.program);
     cmd.args(&command.args).current_dir(&app.repo);
 
-    let launched = if command.wants_terminal {
-        // A terminal editor paints in the pane, so it gets the pane.
-        app.forget_pointer();
-        release_terminal(kbd);
-        let launched = cmd.status();
-        claim_terminal(kbd);
-        drain_input(app)?;
-        launched
-    } else {
+    if !command.wants_terminal {
         // A graphical editor opens a window and never reads the terminal, so reviewr keeps
         // it. The reviewer keeps the diff on screen while they edit, and raw mode stays on,
         // which is what keeps a `ctrl+c` in the pane a key event rather than a signal that
-        // would take the comment store with it (`specs/overview.md`).
-        app.status = format!("editing {} …", target.path);
+        // would take the comment store with it (`specs/overview.md`). The loop is not held
+        // either: [`reap_editors`] notices the close.
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        app.status = match cmd.spawn() {
+            Ok(child) => {
+                let status = format!("editing {} …", target.path);
+                open.push(OpenEditor { child, path: target.path });
+                status
+            }
+            Err(e) => format!("editor failed: {e}"),
+        };
         repaint(terminal, app)?;
-        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()
-    };
+        return Ok(());
+    }
+
+    // A terminal editor paints in the pane, so it gets the pane and the loop waits it out.
+    app.forget_pointer();
+    release_terminal(kbd);
+    let launched = cmd.status();
+    claim_terminal(kbd);
+    drain_input(app)?;
 
     match launched {
         Ok(status) if status.success() => {
             app.status = format!("edited {}", target.path);
-            app.request_world_refresh(true, false);
+            app.request_world_refresh(false, false);
             app.refresh_commanded = true;
         }
         Ok(status) => app.status = format!("editor exited with {status}"),
@@ -829,6 +870,9 @@ const WORKER_TIGHT_WAKE: Duration = Duration::from_millis(15);
 
 /// The wake while a world job is in flight: tight for a building job so its landing paints
 /// near the build's own speed, the fetch cadence for a sample-only one.
+/// How often the loop looks for a closed editor while one is open (`specs/input.md` Edit).
+const EDITOR_WAKE: Duration = Duration::from_millis(250);
+
 fn world_wake(builds: bool) -> Duration {
     if builds { WORKER_TIGHT_WAKE } else { Duration::from_millis(100) }
 }
@@ -865,6 +909,8 @@ fn event_loop(
         world_job_rx,
         world_res_tx,
     );
+    // Graphical editors reviewr launched and has not seen close yet (`specs/input.md` Edit).
+    let mut open_editors: Vec<OpenEditor> = Vec::new();
     let mut world_generation = 0_u64;
     let mut world_inflight: Option<(Instant, bool)> = None;
     // The search worker spawns on the first overlay open, so a session that never
@@ -1241,6 +1287,12 @@ fn event_loop(
             if search_inflight {
                 timeout = timeout.min(WORKER_TIGHT_WAKE);
             }
+            // An open editor is watched, not waited on. The loop wakes often enough that
+            // putting the file down refreshes the changeset while the reviewer is still
+            // looking at the pane (`specs/input.md` Edit).
+            if !open_editors.is_empty() {
+                timeout = timeout.min(EDITOR_WAKE);
+            }
             if let Some(wake) = glyph_wake {
                 timeout = timeout.min(wake.max(Duration::from_millis(15)));
             }
@@ -1324,11 +1376,12 @@ fn event_loop(
             if app.config_error().is_none() {
                 app.tick_base_picker_probe();
             }
-            // An `edit` press named a file: suspend, run the editor, resume, repaint
-            // (`specs/input.md` Edit).
+            // An `edit` press named a file: run the editor, and hand it the pane when it is
+            // one that paints there (`specs/input.md` Edit).
             if app.editor_request.is_some() {
-                run_editor(terminal, app, painted_frame.editor(), kbd)?;
+                run_editor(terminal, app, painted_frame.editor(), kbd, &mut open_editors)?;
             }
+            reap_editors(&mut open_editors, app);
             if app.should_quit {
                 break;
             }

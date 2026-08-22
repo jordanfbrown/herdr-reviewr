@@ -68,7 +68,7 @@ No change to `src/keymap.rs`. `edit` is one action and stays bound to `e`.
 - `just qa-install`, then the user reopens their panes → the demo runs end to end in a real herdr pane.
 - `CFG-WHOLE-FILE` -> the empty-string `editor` test in `src/config.rs` -> the whole file is invalid and the pane blocks.
 - Tight: everything the diff adds is exercised by a DoD line. Delete or defer the rest.
-- No perf bench. The change touches no reload, render, git, or highlight path, and the loop cost is one `Option` check per iteration.
+- Perf bench: `footer_bands` asks `edit_opens_a_file()` twice a frame, so the change is on the render path. Five interleaved A/B rounds against `main`, fixture, painted medians → every scenario inside the run-to-run spread. Baseline unchanged.
 - Gate: promote `specs/input.md` and `specs/config.md` to Current.
 
 ## Landing
