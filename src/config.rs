@@ -586,24 +586,30 @@ fn unknown_key_error(path: &Path, key: &str, options: &str) -> PluginConfigError
     PluginConfigError::new(path, format!("unknown key {key:?}; expected one of {options}"))
 }
 
-/// Parse one self-hosted forge key: a bare hostname naming no built-in forge host — a
-/// hostname is recognized by at most one forge (`specs/config.md`). The built-in set has
-/// one authority, `git::forge_for_host`, asked here with no self-hosted keys.
 /// The first `{...}` token in `command` that is neither `{file}` nor `{line}`.
+///
+/// A brace that closes nothing, or one another brace opens inside, is a character rather than a
+/// token: `--set a={b {file}` names one placeholder, not a malformed one (`specs/config.md`).
 fn unknown_placeholder(command: &str) -> Option<String> {
     let mut rest = command;
     while let Some(at) = rest.find('{') {
-        rest = &rest[at..];
-        let Some(end) = rest.find('}') else { return Some(rest.to_owned()) };
-        let token = &rest[..=end];
-        if token != "{file}" && token != "{line}" {
-            return Some(token.to_owned());
+        rest = &rest[at + 1..];
+        let end = rest.find('}')?;
+        if rest[..end].contains('{') {
+            continue; // the outer brace opened nothing; the inner one may
+        }
+        let name = &rest[..end];
+        if name != "file" && name != "line" {
+            return Some(format!("{{{name}}}"));
         }
         rest = &rest[end + 1..];
     }
     None
 }
 
+/// Parse one self-hosted forge key: a bare hostname naming no built-in forge host — a
+/// hostname is recognized by at most one forge (`specs/config.md`). The built-in set has
+/// one authority, `git::forge_for_host`, asked here with no self-hosted keys.
 fn parse_forge_host(
     path: &Path,
     key: &str,
@@ -758,7 +764,13 @@ mod tests {
         std::fs::write(&path, "editor = \"code -g {file}:{line}\"\n").unwrap();
         let config = super::plugin_config_in(dir.path()).unwrap();
         assert_eq!(config.editor(), Some("code -g {file}:{line}"));
+
         assert_eq!(config.to_json()["editor"], "code -g {file}:{line}");
+
+        // A brace that closes nothing is a character, not a token (`specs/config.md`).
+        std::fs::write(&path, "editor = \"myed --set a={b {file}\"\n").unwrap();
+        let config = super::plugin_config_in(dir.path()).expect("a bare brace is not a token");
+        assert_eq!(config.editor(), Some("myed --set a={b {file}"));
 
         // Unset, the key resolves to null and the environment supplies the editor instead
         // (`specs/input.md` Edit).

@@ -306,6 +306,39 @@ mod tests {
     }
 
     #[test]
+    fn only_a_terminal_editor_is_handed_the_pane() {
+        // The one question the argv does not answer, so nothing else in this module asserts it:
+        // which of the two paths `run_editor` takes.
+        for name in ["vim", "nvim", "nano", "micro", "kak", "emacs", "hx", "helix"] {
+            assert!(env(name).unwrap().wants_terminal, "{name} paints in the pane");
+        }
+        // Argv-identical to a terminal editor of the same dialect, so only this tells them
+        // apart: `zed`/`subl` against `hx`, `bbedit`/`gedit`/`mvim` against `vim`.
+        for name in ["code", "cursor", "zed", "zeditor", "subl", "idea", "kate", "mate"] {
+            assert!(!env(name).unwrap().wants_terminal, "{name} opens a window");
+        }
+        for name in ["mvim", "gvim", "bbedit", "gedit"] {
+            assert!(!env(name).unwrap().wants_terminal, "{name} opens a window");
+        }
+        // A configured command spells its own arguments, but it is still one of these
+        // binaries, and the same name answers the same question.
+        let cfg = |t: &str| resolve(Some(t), None, None, &p(), 41).unwrap().wants_terminal;
+        assert!(!cfg("code -g {file}:{line}"), "the documented example keeps the pane");
+        assert!(cfg("vim +{line} {file}"), "a terminal editor still takes it");
+        // A wait flag the reviewer wrote names a window editor whatever the binary is called:
+        // Zed's own bundle ships its CLI as `cli`, and that must not cost the reviewer the pane.
+        assert!(!cfg("/Applications/Zed.app/Contents/MacOS/cli --wait {file}:{line}"));
+        assert!(!cfg("/opt/weird/ed --block --line {line} {file}"));
+        assert!(!env("/Applications/Zed.app/Contents/MacOS/cli --wait").unwrap().wants_terminal);
+        // Short spellings are ordinary flags elsewhere, so they say nothing: helix's `-w` is
+        // `--working-dir`.
+        assert!(cfg("hx -w {file}"));
+        // An unknown binary says nothing, and only one of the two guesses is survivable.
+        assert!(env("myeditor").unwrap().wants_terminal);
+        assert!(cfg("myed {file}"));
+    }
+
+    #[test]
     fn the_reviewers_own_flags_survive() {
         // `EDITOR="code --wait"` is the documented git setup, so it arrives already waiting.
         assert_eq!(argv(&env("code --wait").unwrap()), "code --wait -g /repo/src/lib.rs:41");
