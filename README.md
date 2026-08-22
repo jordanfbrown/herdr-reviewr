@@ -282,7 +282,10 @@ header reads `no base`, with the footer offering `B pick base`.
 
 `e` opens what the cursor names in your editor: the file you're reading at the line you're on,
 or the selected file in the navigator. On a line you've already commented, `e` still edits the
-comment. reviewr steps aside while the editor runs and refreshes when you come back.
+comment. Either way reviewr refreshes when you come back.
+
+A terminal editor takes over the pane. A graphical one opens its own window, so reviewr stays
+put and you keep the diff on screen while you edit.
 
 Set `$EDITOR` (or `$VISUAL`) and it just works. reviewr knows how each editor wants its line
 number, and adds the wait flag graphical editors need so they don't return before you've typed:

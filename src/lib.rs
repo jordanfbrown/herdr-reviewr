@@ -56,6 +56,8 @@ use ratatui::crossterm::terminal::{
 use ratatui::crossterm::{cursor, execute};
 use ratatui::layout::Rect;
 
+use std::process::Stdio;
+
 use crate::app::{App, Focus, Mode};
 use crate::config::{Config, PluginConfig};
 use crate::export::Clipboard;
@@ -247,13 +249,23 @@ fn run_editor(
     let mut cmd = proc::user_command(&command.program);
     cmd.args(&command.args).current_dir(&app.repo);
 
-    app.forget_pointer();
-    release_terminal(kbd);
-
-    let launched = cmd.status();
-
-    claim_terminal(kbd);
-    drain_input(app)?;
+    let launched = if command.wants_terminal {
+        // A terminal editor paints in the pane, so it gets the pane.
+        app.forget_pointer();
+        release_terminal(kbd);
+        let launched = cmd.status();
+        claim_terminal(kbd);
+        drain_input(app)?;
+        launched
+    } else {
+        // A graphical editor opens a window and never reads the terminal, so reviewr keeps
+        // it. The reviewer keeps the diff on screen while they edit, and raw mode stays on,
+        // which is what keeps a `ctrl+c` in the pane a key event rather than a signal that
+        // would take the comment store with it (`specs/overview.md`).
+        app.status = format!("editing {} …", target.path);
+        repaint(terminal, app)?;
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()
+    };
 
     match launched {
         Ok(status) if status.success() => {

@@ -197,13 +197,20 @@ def main():
         gui = make_editor(bindir, gui_log, "code")
         s = Session(binary, root, gui)
         s.drain()
+        gui_mark = len(s.seen)
         s.press("e")
         gui_argv = []
         if os.path.exists(gui_log):
             with open(gui_log) as f:
                 gui_argv = [line.rstrip("\n") for line in f]
         check("a graphical editor is told to wait", "--wait" in gui_argv, f"argv={gui_argv}")
-        check("the pane comes back painted", b"Changes" in s.seen)
+        # It never reads the terminal, so reviewr keeps it: the reviewer keeps the diff on
+        # screen, and raw mode stays on so a `ctrl+c` in the pane cannot signal the process.
+        gui_after = s.seen[gui_mark:]
+        check("and the pane is never handed to it", ALT_LEAVE not in gui_after)
+        check("so its own output never reaches the screen",
+              b"FAKE-EDITOR-IS-ON-SCREEN" not in gui_after)
+        check("the pane says it is editing", b"editing" in gui_after)
         check("and takes its line as --goto path:line",
               "-g" in gui_argv and bool(gui_argv) and ":" in gui_argv[-1],
               f"argv={gui_argv}")

@@ -97,11 +97,18 @@ const DIALECTS: &[Dialect] = &[
     },
 ];
 
-/// A resolved editor invocation: the program to run and its full argument list.
+/// A resolved editor invocation: the program to run, its full argument list, and whether it
+/// wants the terminal.
+///
+/// A terminal editor paints in the pane and must be handed it outright. A graphical one opens
+/// a window and never reads the terminal at all, so reviewr keeps it (`specs/input.md` Edit).
+/// The wait flag is what tells them apart: an editor needs one exactly when it hands the file
+/// to a window and returns.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EditorCommand {
     pub program: String,
     pub args: Vec<String>,
+    pub wants_terminal: bool,
 }
 
 /// The command that opens `path` at `line`, or `None` when no editor is configured.
@@ -132,8 +139,10 @@ pub fn resolve(
     let program = words.next()?;
     let mut args: Vec<String> = words.collect();
     let Some(dialect) = dialect_for(&program) else {
+        // An editor reviewr does not know is assumed to want the pane, which is the outcome a
+        // terminal editor cannot survive being denied.
         args.push(file);
-        return Some(EditorCommand { program, args });
+        return Some(EditorCommand { program, args, wants_terminal: true });
     };
     // The reviewer's own flags win: a `$EDITOR` that already waits never waits twice, because
     // not every editor's parser accepts a repeated flag. Either spelling counts as already set.
@@ -156,7 +165,7 @@ pub fn resolve(
             args.push(file);
         }
     }
-    Some(EditorCommand { program, args })
+    Some(EditorCommand { program, args, wants_terminal: dialect.wait.is_none() })
 }
 
 /// Split a command into words, honouring quotes.
@@ -212,7 +221,8 @@ fn from_template(template: &str, file: &str, line: u32) -> EditorCommand {
     if !named_file {
         args.push(file.to_owned());
     }
-    EditorCommand { program, args }
+    // A configured command says nothing about which kind it is, so it is handed the pane.
+    EditorCommand { program, args, wants_terminal: true }
 }
 
 #[cfg(test)]
@@ -288,6 +298,22 @@ mod tests {
         assert_eq!(argv(&env("subl -w").unwrap()), "subl -w /repo/src/lib.rs:41");
         assert_eq!(argv(&env("kate -b").unwrap()), "kate -b --line 41 /repo/src/lib.rs");
         assert_eq!(argv(&env("mvim -f").unwrap()), "mvim -f +41 /repo/src/lib.rs");
+    }
+
+    #[test]
+    fn only_a_terminal_editor_is_handed_the_pane() {
+        // The wait flag is the signal: an editor needs one exactly when it hands the file to a
+        // window and returns, which is the same set that never reads the terminal.
+        for name in ["vim", "nvim", "nano", "micro", "kak", "emacs", "hx", "helix"] {
+            assert!(env(name).unwrap().wants_terminal, "{name} paints in the pane");
+        }
+        for name in ["code", "cursor", "zed", "subl", "idea", "kate", "mate", "mvim"] {
+            assert!(!env(name).unwrap().wants_terminal, "{name} opens a window");
+        }
+        // Neither an unknown binary nor a configured command says which it is, and only one
+        // of the two guesses is survivable.
+        assert!(env("myeditor").unwrap().wants_terminal);
+        assert!(resolve(Some("myed {file}"), None, None, &p(), 41).unwrap().wants_terminal);
     }
 
     #[test]
