@@ -56,6 +56,9 @@ const DIALECTS: &[Dialect] = &[
         wait: None,
     },
     Dialect { names: &["nano", "micro", "kak"], line: LineArg::Plus, wait: None },
+    // Emacs is whichever its build and `DISPLAY` make it, and neither is readable from here.
+    // The pane is the survivable guess: a windowed Emacs handed the pane leaves the pane blank
+    // until it quits, where a terminal Emacs denied it is invisible.
     Dialect { names: &["emacs", "emacsclient"], line: LineArg::Plus, wait: None },
     Dialect { names: &["hx", "helix"], line: LineArg::Suffix, wait: None },
     // MacVim opens a window and returns, so it waits under vim's own flag rather than a GUI one.

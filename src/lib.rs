@@ -224,6 +224,15 @@ struct OpenEditor {
     path: String,
 }
 
+/// What the pane says while graphical editors hold files (`specs/input.md` Edit).
+fn editing_status(open: &[OpenEditor]) -> Option<String> {
+    match open {
+        [] => None,
+        [one] => Some(format!("editing {} …", one.path)),
+        many => Some(format!("editing {} files …", many.len())),
+    }
+}
+
 /// Collect the graphical editors that have closed since the last pass.
 ///
 /// Every launched child is waited on exactly here, so none is left unreaped, and the close is
@@ -293,7 +302,6 @@ fn run_editor(
         target.line,
     ) else {
         app.status = "set `editor` in the plugin config, or $EDITOR".into();
-        repaint(terminal, app)?;
         return Ok(());
     };
     // `all_files` lists what the index tracks, so a file removed from the worktree can still
@@ -302,7 +310,6 @@ fn run_editor(
     // save, so the press stops here. Off the render path, so one `stat` costs nothing.
     if !path.is_file() {
         app.status = format!("{} is gone", target.path);
-        repaint(terminal, app)?;
         return Ok(());
     }
     logln!("editor run {} {:?}", command.program, command.args);
@@ -319,19 +326,20 @@ fn run_editor(
         // would take the comment store with it (`specs/overview.md`). The loop is not held
         // either: [`reap_editors`] notices the close.
         cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-        app.status = match cmd.spawn() {
+        match cmd.spawn() {
             Ok(child) => {
-                let status = format!("editing {} …", target.path);
                 open.push(OpenEditor { child, path: target.path });
-                status
+                app.status = editing_status(open).unwrap_or_default();
             }
-            Err(e) => format!("editor failed: {e}"),
-        };
-        repaint(terminal, app)?;
+            Err(e) => app.status = format!("editor failed: {e}"),
+        }
         return Ok(());
     }
 
     // A terminal editor paints in the pane, so it gets the pane and the loop waits it out.
+    // Cooked mode comes back with it, so a `ctrl+c` pressed before the editor installs its own
+    // raw mode is a signal, not a key. That gap is the editor's own startup and reviewr adds
+    // nothing to it (`specs/input.md` Edit).
     app.forget_pointer();
     release_terminal(kbd);
     let launched = cmd.status();
@@ -1029,9 +1037,16 @@ fn event_loop(
                 last_status.clone_from(&app.status);
                 status_at = Instant::now();
             }
-            if !app.status.is_empty() && status_at.elapsed() >= STATUS_TTL {
-                app.status.clear();
-                last_status.clear();
+            // An editor still holding a file is a state, not a notification: anything said over
+            // the top of it expires as usual, back to the editing line
+            // (`specs/input.md` Edit).
+            let editing = editing_status(&open_editors);
+            if !app.status.is_empty()
+                && Some(&app.status) != editing.as_ref()
+                && status_at.elapsed() >= STATUS_TTL
+            {
+                app.status = editing.unwrap_or_default();
+                last_status.clone_from(&app.status);
             }
             // Settle both panes' scroll for this frame's viewport before painting, so the
             // diff window matches what mouse hit-testing will map against. Each pane reveals its

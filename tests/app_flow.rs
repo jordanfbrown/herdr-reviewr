@@ -835,7 +835,7 @@ fn the_footer_hides_edit_file_on_a_deleted_file() {
     assert!(!app.visible.is_empty(), "and its diff is a run of deletions");
     assert!(
         !app.footer_bands().iter().any(|&(x, _)| x == FooterAction::EditFile),
-        "but the worktree no longer holds it, so the footer stays quiet"
+        "but the changeset calls it deleted, so the footer stays quiet"
     );
 
     let keymap = Keymap::default();

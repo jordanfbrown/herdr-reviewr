@@ -14,6 +14,7 @@ import argparse
 import fcntl
 import os
 import pty
+import re
 import select
 import struct
 import subprocess
@@ -25,7 +26,17 @@ import time
 ROWS, COLS = 40, 120
 ALT_ENTER = b"\x1b[?1049h"
 ALT_LEAVE = b"\x1b[?1049l"
-EDITED_LINE = "EDITED-BY-THE-SCRIPTED-EDITOR"
+EDITED_LINE = b"EDITED-BY-THE-SCRIPTED-EDITOR"
+CSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def plain(data):
+    """The bytes with the escape codes taken out.
+
+    A frame paints only the cells that changed, so a word can arrive split across cursor
+    moves and colour changes. Text checks read this, never the raw stream.
+    """
+    return CSI.sub(b"", data)
 
 
 def sh(cwd, *args):
@@ -44,6 +55,9 @@ def make_repo(root):
     sh(root, "git", "commit", "-qm", "init")
     with open(path, "w") as f:
         f.write("one\nTWO\nthree\nfour\nfive\n")
+    # The write lands in the same second as the commit, so git's stat cache can still call the
+    # file clean. Correct it here, or the pane starts on an empty changeset.
+    subprocess.run(["git", "update-index", "--refresh"], cwd=root, capture_output=True)
     return path
 
 
@@ -66,7 +80,7 @@ def make_editor(bindir, argv_log, name, holds=0):
             # The last argument carries the path in every dialect, bare or `path:line`.
             'for a in "$@"; do last="$a"; done\n'
             'printf "%s\\n" "${last%%:*}" > /dev/null\n'
-            f'printf "{EDITED_LINE}\\n" >> "${{last%%:*}}"\n'
+            f'printf "{EDITED_LINE.decode()}\\n" >> "${{last%%:*}}"\n'
             f"sleep {holds}\n"
             "exit 0\n"
         )
@@ -114,6 +128,16 @@ class Session:
         os.write(self.master, key.encode())
         return self.drain()
 
+    def press_bounded(self, key, seconds):
+        """Send a key and read for a fixed span.
+
+        While a graphical editor is open the pane repaints on its own clock, so it never falls
+        quiet and [`drain`]'s quiet window never closes. A bounded read is the only way to look
+        at the screen mid-edit.
+        """
+        os.write(self.master, key.encode())
+        return self.drain(quiet=0.3, timeout=seconds)
+
     def close(self):
         try:
             self.proc.wait(timeout=5)
@@ -155,7 +179,8 @@ def main():
         after = s.seen[before:]
 
         check("`e` leaves the alternate screen", ALT_LEAVE in after)
-        check("the editor's own output reaches the terminal", b"FAKE-EDITOR-IS-ON-SCREEN" in after)
+        check("the editor's own output reaches the terminal",
+              b"FAKE-EDITOR-IS-ON-SCREEN" in plain(after))
         check("the pane re-enters the alternate screen", ALT_ENTER in after)
         check(
             "the alternate screen is left before it is re-entered",
@@ -177,11 +202,11 @@ def main():
 
         with open(file_path) as f:
             body = f.read()
-        check("the editor's write lands in the worktree", EDITED_LINE in body)
+        check("the editor's write lands in the worktree", EDITED_LINE.decode() in body)
 
         out = s.press("r")
         check("reviewr repaints after the refresh", len(out) > 0)
-        check("the status names the edited file", b"edited" in s.seen)
+        check("the status names the edited file", b"edited" in plain(s.seen))
         # The resume must repaint the whole pane, or the editor's leftovers stay on screen.
         check("the resumed frame repaints the whole pane",
               ALT_ENTER in after
@@ -198,11 +223,15 @@ def main():
         # It holds the file the way a reviewer does, so the checks below run against a pane
         # with an editor still open.
         gui_log = os.path.join(home, "argv-gui.txt")
-        gui = make_editor(bindir, gui_log, "code", holds=4)
-        s = Session(binary, root, gui)
+        gui = make_editor(bindir, gui_log, "code", holds=6)
+        # Its own repository, so the earlier session's write is not already on screen.
+        gui_root = os.path.join(home, "gui-repo")
+        os.makedirs(gui_root)
+        make_repo(gui_root)
+        s = Session(binary, gui_root, gui)
         s.drain()
         gui_mark = len(s.seen)
-        s.press("e")
+        s.press_bounded("e", 2.0)
         gui_argv = []
         if os.path.exists(gui_log):
             with open(gui_log) as f:
@@ -213,21 +242,24 @@ def main():
         gui_after = s.seen[gui_mark:]
         check("and the pane is never handed to it", ALT_LEAVE not in gui_after)
         check("so its own output never reaches the screen",
-              b"FAKE-EDITOR-IS-ON-SCREEN" not in gui_after)
-        check("the pane says it is editing", b"editing" in gui_after)
+              b"FAKE-EDITOR-IS-ON-SCREEN" not in plain(gui_after))
+        check("the pane says it is editing", b"editing" in plain(gui_after))
         check("and takes its line as --goto path:line",
               "-g" in gui_argv and bool(gui_argv) and ":" in gui_argv[-1],
               f"argv={gui_argv}")
         # The whole point of keeping the pane: it has to still work. The editor is holding
         # the file right now, so a keypress that repaints proves the loop was never blocked.
-        check("the pane answers keys while the editor holds the file", len(s.press("j")) > 0)
-        # Putting the file down is what refreshes: the status names the edit without the
-        # reviewer touching the pane.
-        # The pane repaints while it watches, so read until the status turns over.
+        check("the pane answers keys while the editor holds the file",
+              len(s.press_bounded("j", 1.0)) > 0)
+        # Putting the file down refreshes with no keypress from the reviewer. The editor's
+        # write is the proof: it cannot be on screen until the diff is rebuilt.
+        check("the write is not on screen while the file is out",
+              EDITED_LINE not in plain(s.seen[gui_mark:]))
         deadline = time.perf_counter() + 15
-        while b"edited" not in s.seen[gui_mark:] and time.perf_counter() < deadline:
-            s.drain(quiet=0.3, timeout=2.0)
-        check("closing the file reports the edit", b"edited" in s.seen[gui_mark:])
+        while EDITED_LINE not in plain(s.seen[gui_mark:]) and time.perf_counter() < deadline:
+            s.drain(quiet=0.3, timeout=1.0)
+        check("closing the file refreshes the diff on its own",
+              EDITED_LINE in plain(s.seen[gui_mark:]))
         s.press("q")
         s.close()
 
@@ -242,9 +274,9 @@ def main():
         mark = len(s.seen)
         s.press("e")
         deadline = time.perf_counter() + 10
-        while b"exit status" not in s.seen[mark:] and time.perf_counter() < deadline:
+        while b"exit status" not in plain(s.seen[mark:]) and time.perf_counter() < deadline:
             s.drain(quiet=0.3, timeout=2.0)
-        after = s.seen[mark:]
+        after = plain(s.seen[mark:])
         check("a graphical editor that fails says so on the pane", b"exit status" in after)
         check("and is never reported as an edit", b"edited" not in after)
         s.press("q")
@@ -261,7 +293,7 @@ def main():
             s.drain()
             mark = len(s.seen)
             s.press("e")
-            check(f"{label} says so on the press", needle in s.seen[mark:])
+            check(f"{label} says so on the press", needle in plain(s.seen[mark:]))
             s.press("q")
             s.close()
 
