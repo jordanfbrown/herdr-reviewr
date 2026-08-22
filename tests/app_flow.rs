@@ -936,7 +936,9 @@ fn the_diff_shows_an_edit_made_in_the_editor_after_the_refresh() {
     };
     assert!(!text(&app).contains("sixth-line-from-the-editor"), "not on screen before the refresh");
 
-    // The refresh `run_editor` requests on a successful edit.
+    // `reload` is the synchronous build-and-reconcile pair; the refresh `run_editor` requests
+    // lands through the world worker and reconciles the same way, so this covers the half that
+    // could fail to rebuild the open file.
     app.reload().unwrap();
     assert!(
         text(&app).contains("sixth-line-from-the-editor"),
