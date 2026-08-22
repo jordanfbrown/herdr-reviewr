@@ -22,7 +22,7 @@ auto_open = false
 github_host = "github.example.com"
 gitlab_host = "git.corp.example"
 azure_devops_host = "tfs.corp.example"
-editor = "code -g {file}:{line}"
+editor = "code --wait -g {file}:{line}"
 
 [keybindings]
 comment  = ["c", "ㅊ"]
@@ -92,7 +92,7 @@ An invalid first read blocks the plugin exactly like a later invalid read. A blo
 
 A hostname is recognized by at most one forge. A host key naming another host key's value, or any forge's built-in host, `*.visualstudio.com` included, is an invalid value (→ CFG-WHOLE-FILE).
 
-`editor` is the whole command line, split on whitespace, and no shell runs it. reviewr substitutes `{file}` with the path and `{line}` with the line number, each as many times as it appears. A value naming neither placeholder gets the path appended. The key sets the command outright, so reviewr adds no flag of its own to it. Unset, the editor is `$VISUAL`, else `$EDITOR`, and its own name picks the arguments (`input.md` Edit). Neither set is the no-editor outcome, never an invalid config. An empty or non-string value is invalid (→ CFG-WHOLE-FILE).
+`editor` is the whole command line, split on whitespace, and no shell runs it. reviewr substitutes `{file}` with the path and `{line}` with the line number, each as many times as it appears. A value naming neither placeholder gets the path appended. The key sets the command outright, so reviewr adds no flag of its own to it, a graphical editor's wait flag included (`input.md` Edit). Unset, the editor is `$VISUAL`, else `$EDITOR`, and its own name picks the arguments (`input.md` Edit). Neither set is the no-editor outcome, never an invalid config. An empty or non-string value is invalid (→ CFG-WHOLE-FILE).
 
 `navigator_position` applies at startup and after config recovery. The `navigator-position` action changes the position for the session. A valid snapshot replaces the session position only when its `navigator_position` differs from the previous valid snapshot's. Recovery preserves both session navigator shares and the hidden state (`tui.md`).
 

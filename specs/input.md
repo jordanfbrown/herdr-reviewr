@@ -120,7 +120,7 @@ The steps and the skips share the rest:
 - A graphical editor returns as soon as it hands the file to a running window, so reviewr adds its wait flag. A command that already carries that flag, in either spelling, gets no second one. A terminal editor holds the pane already and gets none.
 - The path reviewr passes is absolute, so no file name reads as a flag.
 - Returning restores the open file, the cursor, the scroll, the folds, and the footer's expansion.
-- A finished edit refreshes the changeset and samples the turn, since the editor held the loop through every turn edge meanwhile (`herdr-host.md`). The diff reconciles in place (`overview.md` Continuity).
+- A finished edit refreshes the changeset and samples the turn, so tracking resumes without waiting for the next poll. A turn that both began and ended while the editor held the loop is missed like any turn shorter than a poll (`herdr-host.md`). The diff reconciles in place (`overview.md` Continuity).
 - A live mouse gesture and a divider drag both end at the press, because mouse reporting stops while the editor runs and neither release would arrive (`text-selection.md`, `tui.md`).
 
 The editor writes, never reviewr (`overview.md`). An edit made while an agent's turn is open joins that turn's diff, so `last-turn` shows the reviewer's own change beside the agent's (`herdr-host.md`).

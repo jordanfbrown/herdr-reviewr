@@ -2970,21 +2970,28 @@ impl App {
     /// Name the file the cursor points at, for the event loop to open (`specs/input.md` Edit).
     /// A directory row and the text-entry modes name nothing, so nothing is requested.
     fn request_edit_file(&mut self) {
-        let Some((path, line)) = self.edit_file_target() else { return };
+        let Some(target) = self.editable_file() else {
+            // Only a cursor that named a file at all deserves a message. Elsewhere the key is
+            // inert and says nothing (`specs/input.md` Edit).
+            if self.edit_file_target().is_some() {
+                self.status = "no file here".into();
+            }
+            return;
+        };
+        self.editor_request = Some(target);
+    }
+
+    /// The file the cursor names, when the worktree still holds it. The one predicate the
+    /// press and the footer share, so the bar offers the key exactly where it works
+    /// (`specs/input.md` Footer).
+    pub(crate) fn editable_file(&self) -> Option<EditorTarget> {
+        let (path, line) = self.edit_file_target()?;
         // Absolute, so no editor can read the file name as one of its own flags and no dialect
         // needs a `--` guard (`src/editor.rs`). `absolute` keeps symlinks, unlike canonicalize,
         // so a worktree reached through one opens under the name the reviewer knows.
-        let Ok(path) = std::path::absolute(self.repo.join(path)) else {
-            self.status = "no file here".into();
-            return;
-        };
-        // A path the worktree no longer holds is not editable. The changeset can name a
-        // deleted file, and the navigator can outlive one by a poll.
-        if !path.is_file() {
-            self.status = "no file here".into();
-            return;
-        }
-        self.editor_request = Some(EditorTarget { path, line });
+        let path = std::path::absolute(self.repo.join(path)).ok()?;
+        // The changeset names deleted files, and the navigator can outlive one by a poll.
+        path.is_file().then_some(EditorTarget { path, line })
     }
 
     /// The repository-relative file and 1-based line the cursor names, or `None` where nothing
@@ -3973,7 +3980,7 @@ impl App {
                     pane_is_primary = true;
                     // A file row names a file `edit` can open; a directory row does not
                     // (`specs/input.md` Edit).
-                    if self.current_entry().is_some() {
+                    if self.editable_file().is_some() {
                         out.push((A::EditFile, Do));
                     }
                 }
@@ -4016,6 +4023,7 @@ impl App {
             && !self.visible.is_empty()
             && self.select_anchor.is_none()
             && (self.preview_active() || self.comment_under_cursor().is_none())
+            && self.editable_file().is_some()
         {
             out.push((A::EditFile, Do));
         }

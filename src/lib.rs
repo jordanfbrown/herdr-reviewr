@@ -205,7 +205,9 @@ fn run_editor(
     app.finish_divider_drag();
 
     leave_terminal_modes(kbd);
-    let _ = execute!(io::stdout(), LeaveAlternateScreen);
+    // Every Normal-mode frame hides the cursor, so the editor would inherit a terminal without
+    // one. The next draw hides it again unconditionally.
+    let _ = execute!(io::stdout(), LeaveAlternateScreen, ratatui::crossterm::cursor::Show);
     let _ = disable_raw_mode();
 
     let launched = cmd.status();

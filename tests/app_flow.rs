@@ -775,8 +775,11 @@ fn the_footer_offers_the_action_for_what_the_cursor_is_on() {
 
 #[test]
 fn the_footer_offers_edit_file_wherever_the_key_opens_one() {
-    let mut app = composing_app();
-    app.cancel_comment(); // diff focus, on a changed line, no comment yet
+    // The repo has to outlive the app: the footer asks the worktree whether the file is there.
+    let r = edited_repo();
+    let mut app = app_on(&r);
+    app.focus = Focus::Diff;
+    app.diff_cursor = row_with(&app, '+');
     let has = |a: &App| a.footer_bands().iter().any(|&(x, _)| x == FooterAction::EditFile);
     assert!(has(&app), "an uncommented diff line offers edit file");
 
@@ -786,6 +789,36 @@ fn the_footer_offers_edit_file_wherever_the_key_opens_one() {
 
     app.focus = Focus::Files;
     assert!(has(&app), "a navigator file row offers it too");
+}
+
+/// The footer never names a key that would not work, and a deleted file is the case that
+/// separates "the cursor names a file" from "the worktree still holds it".
+#[test]
+fn the_footer_hides_edit_file_on_a_deleted_file() {
+    let r = Repo::init();
+    r.write("gone.rs", "one\ntwo\n");
+    r.commit_all("init");
+    std::fs::remove_file(r.path().join("gone.rs")).unwrap();
+    let mut app = app_on(&r);
+    app.focus = Focus::Diff;
+
+    assert_eq!(app.diff_path.as_deref(), Some("gone.rs"), "the changeset still names it");
+    assert!(!app.visible.is_empty(), "and its diff is a run of deletions");
+    assert!(
+        !app.footer_bands().iter().any(|&(x, _)| x == FooterAction::EditFile),
+        "but the worktree no longer holds it, so the footer stays quiet"
+    );
+
+    let keymap = Keymap::default();
+    press(&mut app, &keymap, KeyCode::Char('e'));
+    assert!(app.editor_request.is_none(), "and the press opens nothing");
+    assert_eq!(app.status, "no file here", "saying so rather than failing silently");
+
+    app.focus = Focus::Files;
+    assert!(
+        !app.footer_bands().iter().any(|&(x, _)| x == FooterAction::EditFile),
+        "the navigator row is quiet for the same reason"
+    );
 }
 
 #[test]

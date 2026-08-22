@@ -219,7 +219,7 @@ toggle_placement = "overlay"
 toggle_direction = "down"
 auto_open = false
 github_host = "github.example.com"
-editor = "code -g {file}:{line}"
+editor = "code --wait -g {file}:{line}"
 
 [keybindings]
 comment = ["c", "ㅊ"]
@@ -305,7 +305,8 @@ editor = "myeditor --at {line} {file}"
 ```
 
 `{file}` and `{line}` are substituted wherever they appear. This value is the whole command, so
-reviewr adds nothing to it. With no `editor` key and no `$EDITOR`, `e` tells you what to set
+reviewr adds nothing to it — including the wait flag, which a graphical editor needs or it hands
+the file to its window and returns before you've typed. With no `editor` key and no `$EDITOR`, `e` tells you what to set
 rather than opening something you didn't choose.
 
 ### Keybindings
