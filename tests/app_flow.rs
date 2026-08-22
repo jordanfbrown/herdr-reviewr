@@ -818,6 +818,28 @@ fn edit_opens_the_file_under_the_cursor_and_the_comment_when_one_is_there() {
 }
 
 #[test]
+fn edit_is_inert_while_a_line_selection_is_live() {
+    let r = edited_repo();
+    let mut app = app_on(&r);
+    app.focus = Focus::Diff;
+    let keymap = Keymap::default();
+
+    app.toggle_select();
+    assert!(app.select_anchor.is_some(), "v starts a selection");
+    press(&mut app, &keymap, KeyCode::Char('e'));
+    assert!(app.editor_request.is_none(), "a press cannot abandon the range being selected");
+    assert!(app.select_anchor.is_some(), "and the selection survives it");
+    assert!(
+        !app.footer_bands().iter().any(|&(a, _)| a == FooterAction::EditFile),
+        "the footer never names a key that would not work here"
+    );
+
+    app.clear_selection();
+    press(&mut app, &keymap, KeyCode::Char('e'));
+    assert!(app.editor_request.is_some(), "and works again once the selection is cleared");
+}
+
+#[test]
 fn a_rebound_edit_key_carries_the_file_editor_with_it() {
     let r = edited_repo();
     let mut app = app_on(&r);

@@ -198,8 +198,11 @@ fn run_editor(
     cmd.args(&command.args);
 
     // Mouse reporting goes off below, so a button still held now would never report its
-    // release and its freeze would hold the open view's reloads (`specs/text-selection.md`).
+    // release. A text or gutter gesture would hold the open view's reloads
+    // (`specs/text-selection.md`), and a divider drag left cancelled would swallow every
+    // later left-drag. Both end here.
     app.cancel_gesture();
+    app.finish_divider_drag();
 
     leave_terminal_modes(kbd);
     let _ = execute!(io::stdout(), LeaveAlternateScreen);
@@ -211,8 +214,14 @@ fn run_editor(
     let _ = execute!(io::stdout(), EnterAlternateScreen);
     enter_terminal_modes(kbd);
     // The editor's own exit can leave keystrokes queued; they belong to it, not to the review.
+    // A resize is the terminal's, not the editor's, so it still has to be answered: the pane
+    // may have reflowed under a settled highlight while the editor owned the screen.
+    let mut resized = false;
     while event::poll(Duration::ZERO)? {
-        let _ = event::read();
+        resized |= matches!(event::read(), Ok(Event::Resize(_, _)));
+    }
+    if resized {
+        handle_resize(app);
     }
 
     match launched {

@@ -2819,7 +2819,7 @@ impl App {
     /// End the live gesture without a copy: the reflow-input cancel, and the dissolve of a
     /// press that never moved or a lost gutter drag. The multi-click chain resets — only a
     /// gesture's own release continues it — and the freeze lifts (specs/text-selection.md).
-    pub fn cancel_gesture(&mut self) {
+    pub(crate) fn cancel_gesture(&mut self) {
         if !self.gesture_active() {
             return; // nothing live: the multi-click chain survives unrelated input
         }
@@ -2993,6 +2993,11 @@ impl App {
         // The comments list, the pickers, and every text field keep their own meaning for the
         // key, so `edit` never reaches a file from there (`specs/input.md` Edit).
         if self.mode != Mode::Normal {
+            return None;
+        }
+        // A live line selection is a gesture in progress, so `edit` is inert like the
+        // changeset steps and skips. A press must not abandon the range being selected.
+        if self.select_anchor.is_some() {
             return None;
         }
         if self.focus == Focus::Files {
@@ -4009,6 +4014,7 @@ impl App {
         if self.focus == Focus::Diff
             && self.diff_path.is_some()
             && !self.visible.is_empty()
+            && self.select_anchor.is_none()
             && (self.preview_active() || self.comment_under_cursor().is_none())
         {
             out.push((A::EditFile, Do));

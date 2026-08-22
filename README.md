@@ -292,7 +292,7 @@ number, and adds the wait flag graphical editors need so they don't return befor
 | vim, nvim, nano, micro, kakoune, emacs | `+41 path` |
 | MacVim, gVim | `-f +41 path` |
 | helix, Zed, Sublime Text | `path:41` (Zed and Sublime also get `--wait`) |
-| VS Code, Cursor, Windsurf, VSCodium | `--wait --goto path:41` |
+| VS Code, Cursor, Windsurf, VSCodium | `--wait -g path:41` |
 | JetBrains IDEs, Xcode, TextMate | `--wait --line 41 path` |
 | Kate | `--block --line 41 path` |
 
