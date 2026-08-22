@@ -320,6 +320,52 @@ fn the_file_list_renders_as_a_directory_tree() {
 }
 
 #[test]
+fn an_expanded_directory_nests_its_children() {
+    // All files paints unchanged rows without a marker. Those two columns must still
+    // hold the chevron's width, or child names line up with the parent (file-list.md).
+    let r = Repo::init();
+    r.write("src/app.rs", "x\n");
+    r.write("src/ui.rs", "y\n");
+    r.write("tests/a.rs", "a\n");
+    r.write("tests/b.rs", "b\n");
+    r.write("README.md", "hi\n");
+    r.commit_all("init");
+    let mut app = app_on(&r);
+    enter_tab(&mut app, Tab::AllFiles);
+    app.focus = Focus::Files;
+    app.file_cursor = app.file_rows.iter().position(|r| r.dir_path() == Some("src")).unwrap();
+    app.expand_dir();
+
+    let buf = render_buffer(&app);
+    // Search from the files pane so a left-pane path cannot steal the match.
+    let files_x0 = 140 - 140 * 32 / 100 + 1;
+    let src = token_x(&buf, "src/", files_x0);
+    let tests = token_x(&buf, "tests/", files_x0);
+    let readme = token_x(&buf, "README.md", files_x0);
+    let app_rs = token_x(&buf, "app.rs", files_x0);
+    assert_eq!(src, tests, "sibling directories share a name column");
+    assert_eq!(src, readme, "a root file name lines up with a root directory");
+    assert!(app_rs > src, "a child file sits to the right of its parent: {app_rs} vs {src}");
+}
+
+/// First painted column of `token` in `buf` at or after `x0`. Panics if it never appears.
+fn token_x(buf: &Buffer, token: &str, x0: u16) -> u16 {
+    let chars: Vec<char> = token.chars().collect();
+    let n = chars.len() as u16;
+    for y in 0..buf.area.height {
+        for x in x0..buf.area.width.saturating_sub(n) {
+            let hit = (0..n).all(|i| {
+                buf.cell((x + i, y)).is_some_and(|c| c.symbol() == chars[i as usize].to_string())
+            });
+            if hit {
+                return x;
+            }
+        }
+    }
+    panic!("{token} was not painted at x>={x0}");
+}
+
+#[test]
 fn a_saved_comment_renders_inline_as_a_card() {
     let r = Repo::init();
     r.write("a.rs", "alpha\nbeta\n");
