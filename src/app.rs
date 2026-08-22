@@ -2981,9 +2981,19 @@ impl App {
         self.editor_request = Some(target);
     }
 
-    /// The file the cursor names, when the worktree still holds it. The one predicate the
-    /// press and the footer share, so the bar offers the key exactly where it works
-    /// (`specs/input.md` Footer).
+    /// Whether the cursor names a file the changeset still has, for the footer.
+    ///
+    /// The cheap half of [`Self::editable_file`]: the press stats the path, since a file can
+    /// vanish between polls, but `footer_bands` runs several times per painted frame and a
+    /// `stat` there is a blocking round trip on a network worktree. The two disagree only for
+    /// a file deleted since the last refresh, which is stale, never wrong (`overview.md`).
+    pub(crate) fn names_a_live_file(&self) -> bool {
+        let Some((path, _)) = self.edit_file_target() else { return false };
+        self.changed_annotation(&path).map(|a| a.change) != Some(crate::model::ChangeKind::Deleted)
+    }
+
+    /// The file the cursor names, when the worktree still holds it. What the press acts on
+    /// (`specs/input.md` Edit).
     pub(crate) fn editable_file(&self) -> Option<EditorTarget> {
         let (path, line) = self.edit_file_target()?;
         // Absolute, so no editor can read the file name as one of its own flags and no dialect
@@ -3985,7 +3995,7 @@ impl App {
                     pane_is_primary = true;
                     // A file row names a file `edit` can open; a directory row does not
                     // (`specs/input.md` Edit).
-                    if self.editable_file().is_some() {
+                    if self.names_a_live_file() {
                         out.push((A::EditFile, Do));
                     }
                 }
@@ -4025,10 +4035,9 @@ impl App {
         // key first. A commented line keeps `e edit` as its primary (`specs/input.md` Edit).
         if self.focus == Focus::Diff
             && self.diff_path.is_some()
-            && !self.visible.is_empty()
             && self.select_anchor.is_none()
             && (self.preview_active() || self.comment_under_cursor().is_none())
-            && self.editable_file().is_some()
+            && self.names_a_live_file()
         {
             out.push((A::EditFile, Do));
         }

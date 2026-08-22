@@ -107,7 +107,7 @@ pub struct EditorCommand {
 /// The command that opens `path` at `line`, or `None` when no editor is configured.
 ///
 /// `configured` is the `editor` config key. Its value is the whole command, and `{file}` and
-/// `{line}` substitute into it wherever they appear. A template naming neither placeholder gets
+/// `{line}` substitute into it wherever they appear. A template that does not name `{file}` gets
 /// the path appended, so a bare `editor = "hx"` still opens the file.
 ///
 /// With no key, `visual` then `editor_env` supply the command, and its binary name selects a

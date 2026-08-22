@@ -791,6 +791,31 @@ fn the_footer_offers_edit_file_wherever_the_key_opens_one() {
     assert!(has(&app), "a navigator file row offers it too");
 }
 
+/// A notice diff paints no rows but the file is right there, so the footer must offer the key
+/// the press honours.
+#[test]
+fn the_footer_offers_edit_file_on_a_diff_with_no_rows() {
+    let r = Repo::init();
+    r.write("seed.rs", "x\n");
+    r.commit_all("init");
+    r.write("blob.bin", "\u{0}\u{1}\u{2}binary\u{0}\n");
+    let mut app = app_on(&r);
+    app.focus = Focus::Diff;
+
+    assert_eq!(app.diff_path.as_deref(), Some("blob.bin"));
+    assert!(app.visible.is_empty(), "a binary file paints no rows");
+    assert!(
+        app.footer_bands().iter().any(|&(x, _)| x == FooterAction::EditFile),
+        "the file is there, so the footer offers the key"
+    );
+
+    let keymap = Keymap::default();
+    press(&mut app, &keymap, KeyCode::Char('e'));
+    let request = app.editor_request.expect("and the press opens it");
+    assert!(request.path.ends_with("blob.bin"));
+    assert_eq!(request.line, 1, "at its start, since no row names a line");
+}
+
 /// The footer never names a key that would not work, and a deleted file is the case that
 /// separates "the cursor names a file" from "the worktree still holds it".
 #[test]

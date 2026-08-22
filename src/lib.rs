@@ -221,8 +221,14 @@ fn run_editor(
     // The editor's own exit can leave keystrokes queued; they belong to it, not to the review.
     // A resize is the terminal's, not the editor's, so it still has to be answered: the pane
     // may have reflowed under a settled highlight while the editor owned the screen.
+    // A non-zero timeout, because `event::poll(Duration::ZERO)` never polls the terminal in
+    // crossterm 0.29: a zero leftover exits its read loop before it looks at the fd, so only
+    // events parsed before the editor ran would be seen. Undrained bytes reach the loop as
+    // review commands, and an editor's teardown queries answer in exactly those bytes. The
+    // deadline bounds a terminal that keeps talking.
+    let drain_until = Instant::now() + Duration::from_millis(50);
     let mut resized = false;
-    while event::poll(Duration::ZERO)? {
+    while Instant::now() < drain_until && event::poll(Duration::from_millis(5))? {
         resized |= matches!(event::read(), Ok(Event::Resize(_, _)));
     }
     if resized {

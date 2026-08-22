@@ -157,7 +157,9 @@ def main():
         check("the pane re-enters the alternate screen", ALT_ENTER in after)
         check(
             "the alternate screen is left before it is re-entered",
-            ALT_LEAVE in after and after.index(ALT_LEAVE) < after.rindex(ALT_ENTER),
+            ALT_LEAVE in after
+            and ALT_ENTER in after
+            and after.index(ALT_LEAVE) < after.rindex(ALT_ENTER),
         )
 
         argv = []
@@ -180,7 +182,9 @@ def main():
         check("the status names the edited file", b"edited" in s.seen)
         # The resume must repaint the whole pane, or the editor's leftovers stay on screen.
         check("the resumed frame repaints the whole pane",
-              after.count(b"Changes") >= 1 and after.rindex(b"Changes") > after.index(ALT_ENTER),
+              ALT_ENTER in after
+              and b"Changes" in after
+              and after.rindex(b"Changes") > after.index(ALT_ENTER),
               "the pane did not redraw after re-entering the alternate screen")
 
         s.press("q")
