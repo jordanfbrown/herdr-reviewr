@@ -239,7 +239,7 @@ fn run_editor(
     // A herdr pane may launch with a stripped PATH, so the binary resolves through the same
     // common locations every other host tool does (`specs/herdr-host.md`).
     let mut cmd = proc::command(&command.program);
-    cmd.args(&command.args);
+    cmd.args(&command.args).current_dir(&app.repo);
 
     app.forget_pointer();
     release_terminal(kbd);

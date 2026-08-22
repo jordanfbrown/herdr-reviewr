@@ -2967,15 +2967,27 @@ impl App {
     /// `edit`: the comment under the cursor, else the file the cursor names
     /// (`specs/input.md` Edit). One key, resolved by what is actually there.
     pub fn start_edit(&mut self) {
-        // A comment claims the key only where its card is on screen. With the navigator
-        // focused the diff cursor is off-screen, so the file row under the eye wins.
-        let comment_visible =
-            self.mode == Mode::List || (self.focus == Focus::Diff && !self.preview_active());
-        if comment_visible && self.target_comment().is_some() {
+        if self.comment_claims_edit() {
             self.edit_comment();
             return;
         }
         self.editor_request = self.edit_target();
+    }
+
+    /// Whether a comment takes the key here, rather than the file.
+    ///
+    /// A comment claims it only where its card is on screen. With the navigator focused the
+    /// diff cursor is off screen, so the file row under the eye wins.
+    fn comment_claims_edit(&self) -> bool {
+        let card_visible =
+            self.mode == Mode::List || (self.focus == Focus::Diff && !self.preview_active());
+        card_visible && self.target_comment().is_some()
+    }
+
+    /// Whether `edit` opens a file here. The branch [`Self::start_edit`] takes, asked by the
+    /// footer, so the bar and the press cannot disagree (`specs/input.md` Edit).
+    pub(crate) fn edit_opens_a_file(&self) -> bool {
+        !self.comment_claims_edit() && self.edit_target().is_some()
     }
 
     /// The file `edit` opens and the line to open it at, or `None` where the key opens nothing.
@@ -3973,11 +3985,6 @@ impl App {
                 _ => {
                     out.push((A::TogglePane, Primary)); // tab into the diff to review
                     pane_is_primary = true;
-                    // A file row names a file `edit` can open; a directory row does not
-                    // (`specs/input.md` Edit).
-                    if self.edit_target().is_some() {
-                        out.push((A::EditFile, Do));
-                    }
                 }
             }
             // The files pane's calm row 1 has the room for the hide key (specs/input.md).
@@ -4013,12 +4020,9 @@ impl App {
 
         // `edit` opens the file wherever the read pane paints one and no comment claims the
         // key first. A commented line keeps `e edit` as its primary (`specs/input.md` Edit).
-        // `edit` opens the file wherever it names one and no comment claims the key first
-        // (`specs/input.md` Edit). The same predicate the press uses, so the bar offers the
-        // key exactly where it works.
-        if (self.preview_active() || self.comment_under_cursor().is_none())
-            && self.edit_target().is_some()
-        {
+        // `edit` offers the file wherever the press would open one, asked once for every
+        // surface so the bar can neither miss a row nor name one twice (`specs/input.md` Edit).
+        if self.edit_opens_a_file() {
             out.push((A::EditFile, Do));
         }
 
@@ -4873,9 +4877,13 @@ mod tests {
             let mut app = edit_app();
             setup(&mut app);
             assert_eq!(app.edit_target(), expected, "{name}");
-            // The footer offers the key exactly where the press acts, by construction.
-            let offered = app.footer_bands().iter().any(|&(a, _)| a == FooterAction::EditFile);
-            assert_eq!(offered, expected.is_some(), "the footer disagrees with the press: {name}");
+            // The footer offers the key exactly where the press acts, and names it once. A
+            // count, not a presence check: two branches each pushing it reads as `e edit file
+            // · z hide · e edit file` on one row.
+            let offered =
+                app.footer_bands().iter().filter(|&&(a, _)| a == FooterAction::EditFile).count();
+            let expected_offers = usize::from(expected.is_some() && !app.comment_claims_edit());
+            assert_eq!(offered, expected_offers, "the footer disagrees with the press: {name}");
         }
     }
 

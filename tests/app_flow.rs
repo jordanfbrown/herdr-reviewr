@@ -788,7 +788,11 @@ fn the_footer_offers_edit_file_wherever_the_key_opens_one() {
     assert!(!has(&app), "and never advertises the file, since the key edits the comment there");
 
     app.focus = Focus::Files;
-    assert!(has(&app), "a navigator file row offers it too");
+    assert_eq!(
+        app.footer_bands().iter().filter(|&&(x, _)| x == FooterAction::EditFile).count(),
+        1,
+        "a navigator file row offers it too, once"
+    );
 }
 
 /// A notice diff paints no rows but the file is right there, so the footer must offer the key

@@ -217,13 +217,14 @@ Row 1's primary and actions follow the cursor:
 | a live selection                        | `c comment`                   | `esc clear`                          |
 | a commented line                        | `e edit`                      | `d delete · n/N jump`                |
 | a fold                                  | `→ expand fold`               | `e edit file`                        |
+| a diff with no rows (binary, too large) | `u/b/t scope`                 | `e edit file`                        |
 | an open markdown preview                | `m source`                    | `e edit file`                        |
 | a file (file list)                      | `tab diff`                    | `e edit file · z hide`               |
 | a collapsed directory                   | `→ expand`                    | `z hide`                             |
 | an expanded directory                   | `← collapse`                  | `z hide`                             |
 | nothing to review (awaiting turn)       | `u/b/t scope`                 | `r refresh`                          |
 | the `branch` scope with no base         | `B pick base`                 | `u/t scope · r refresh`              |
-| an empty read pane, navigator hidden    | `z show`                      | `tab files`                          |
+| an empty read pane, navigator hidden    | `z show`                      | `tab files · e edit file`            |
 
 - An armed crossing outranks the cursor's own action and leads row 1, since only the footer says the next press leaves the file. It is the one movement key on row 1 (see Changeset traversal). While it is armed, the `move` band drops the hunk step, whose key row 1 now shows.
 - While the navigator is hidden, `z show` joins row 1's actions, so the collapsed footer always names the way back. Visible, `z hide` joins them only while the file list holds focus, whose row 1 has the room. Elsewhere it waits in the `go` band.
