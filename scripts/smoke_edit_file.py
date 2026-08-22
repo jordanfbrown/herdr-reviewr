@@ -138,6 +138,14 @@ class Session:
         os.write(self.master, key.encode())
         return self.drain(quiet=0.3, timeout=seconds)
 
+    def cpu_seconds(self):
+        """Processor time the pane has used so far."""
+        out = subprocess.run(
+            ["ps", "-o", "time=", "-p", str(self.proc.pid)], capture_output=True, text=True
+        ).stdout.strip()
+        minutes, seconds = out.split(":")[-2:]
+        return int(minutes) * 60 + float(seconds)
+
     def close(self):
         try:
             self.proc.wait(timeout=5)
@@ -251,6 +259,13 @@ def main():
         # the file right now, so a keypress that repaints proves the loop was never blocked.
         check("the pane answers keys while the editor holds the file",
               len(s.press_bounded("j", 1.0)) > 0)
+        # Waiting has to be cheap. A wake the loop can never satisfy turns the wait into a
+        # spin, which is invisible to every functional check but costs a whole core for as
+        # long as the reviewer keeps the file open.
+        before = s.cpu_seconds()
+        s.drain(quiet=0.3, timeout=3.0)
+        burned = s.cpu_seconds() - before
+        check("and rests while it waits", burned < 0.2, f"burned {burned:.2f}s of cpu in 3s")
         # Putting the file down refreshes with no keypress from the reviewer. The editor's
         # write is the proof: it cannot be on screen until the diff is rebuilt.
         check("the write is not on screen while the file is out",

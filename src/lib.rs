@@ -907,7 +907,11 @@ fn glyph_clears(lit_for: Duration) -> bool {
 const WORKER_TIGHT_WAKE: Duration = Duration::from_millis(15);
 
 /// How often the loop looks for a closed editor while one is open (`specs/input.md` Edit).
-const EDITOR_WAKE: Duration = Duration::from_millis(250);
+///
+/// Every wake redraws, and the reviewer may hold a file for minutes, so this is as slow as the
+/// moment tolerates: the refresh follows the close by about a second, and the pane costs one
+/// frame a second to wait.
+const EDITOR_WAKE: Duration = Duration::from_secs(1);
 
 /// The wake while a world job is in flight: tight for a building job so its landing paints
 /// near the build's own speed, the fetch cadence for a sample-only one.
@@ -1045,7 +1049,7 @@ fn event_loop(
                 && Some(&app.status) != editing.as_ref()
                 && status_at.elapsed() >= STATUS_TTL
             {
-                app.status = editing.unwrap_or_default();
+                app.status = editing.clone().unwrap_or_default();
                 last_status.clone_from(&app.status);
             }
             // Settle both panes' scroll for this frame's viewport before painting, so the
@@ -1313,12 +1317,15 @@ fn event_loop(
                     let _ = tx.send(TaggedPr { generation, config_epoch: epoch, input, view });
                 });
             }
-            // Wake at the status-expiry boundary too, so it clears on time when idle.
+            // Wake at the status-expiry boundary too, so it clears on time when idle. The
+            // editing line does not expire, so it asks for no wake of its own — a wake it can
+            // never satisfy is a spin.
             let poll_left = poll.saturating_sub(last_poll.elapsed());
-            let mut timeout = if app.status.is_empty() {
-                poll_left
-            } else {
+            let expiring = !app.status.is_empty() && Some(&app.status) != editing.as_ref();
+            let mut timeout = if expiring {
                 poll_left.min(STATUS_TTL.saturating_sub(status_at.elapsed()))
+            } else {
+                poll_left
             };
             // While a fetch is in flight, wake often so its result paints promptly when it
             // lands. A world refresh usually lands within tens of milliseconds, so its wake
