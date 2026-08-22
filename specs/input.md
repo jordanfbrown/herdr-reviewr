@@ -1,7 +1,7 @@
 ---
-Status: Current
+Status: Draft
 Created: 2026-07-17
-Last edited: 2026-08-19
+Last edited: 2026-08-22
 ---
 
 # Input
@@ -47,7 +47,7 @@ The keymap is rebindable per action through `[keybindings]` in the plugin config
 | —                                                        | clear the selection                         | `esc`                                       | —                                              |
 | `comment`                                                | comment on the selection                    | `c`, type, `enter`                          | click or drag the gutter                       |
 | —                                                        | copy text (`text-selection.md`)             | —                                           | drag over text                                 |
-| `edit`                                                   | edit the comment under the cursor           | `e`                                         | —                                              |
+| `edit`                                                   | edit the comment, else open the file        | `e`                                         | —                                              |
 | `delete`                                                 | delete the comment under the cursor         | `d`                                         | —                                              |
 | `next-comment` / `prev-comment`                          | jump to next / previous comment             | `n` / `N`                                   | —                                              |
 | `comments`                                               | list and manage all comments                | `l`                                         | —                                              |
@@ -107,6 +107,22 @@ The steps and the skips share the rest:
 - On a directory row in the focused file list, `expand` shows its children and `collapse` hides them.
 - On a fold in the diff, `expand` opens it. An open fold never closes again, so `collapse` scrolls there.
 - Elsewhere, `expand` scrolls the diff right and `collapse` scrolls it left. The scroll is inert while wrap is on.
+
+### Edit
+
+`edit` acts on what the cursor names. On a commented line it opens that comment for editing. Everywhere else it opens the file in the reviewer's editor, and reviewr suspends while the editor owns the pane.
+
+- In the read pane the file opens at the line under the cursor. A deletion and a fold carry no worktree line, so the nearest numbered row above names it.
+- On a file row in the navigator, and in a markdown preview, the file opens at line 1.
+- On a directory row `edit` is inert. The comments list still edits its highlighted comment, and the comment editor, the agent picker, the base picker, the find band, and the search screen keep the key as text or as their own action.
+- The editor command is the `editor` config key (`config.md`). With neither that key nor `$VISUAL` nor `$EDITOR` set, the press names what to set and opens nothing. reviewr never guesses an editor.
+- The editor's own name picks its arguments. Four spellings cover the editors reviewr knows: `+LINE path` for the vi family, nano, micro, kakoune, emacs, BBEdit, and gedit, `path:LINE` for helix, Zed, and Sublime Text, `-g path:LINE` for the VS Code family and its forks, and `--line LINE path` for the JetBrains family, Xcode, Kate, and TextMate. A name reviewr does not know opens the file without a line.
+- A graphical editor returns as soon as it hands the file to a running window, so reviewr adds its wait flag and the reviewer's own command keeps precedence over it. A terminal editor holds the pane already and gets none.
+- The path reviewr passes is absolute, so no file name reads as a flag.
+- Returning restores the open file, the cursor, the scroll, the folds, and the footer's expansion.
+- A finished edit refreshes the changeset, and the diff reconciles in place (`overview.md` Continuity).
+
+The editor writes, never reviewr (`overview.md`). An edit made while an agent's turn is open joins that turn's diff, so `last-turn` shows the reviewer's own change beside the agent's (`herdr-host.md`).
 
 ### Footer
 
@@ -172,21 +188,21 @@ The `?` expansion:
 
 Row 1's primary and actions follow the cursor:
 
-| cursor on                                | primary                        | also                              |
-| ---------------------------------------- | ------------------------------ | --------------------------------- |
-| an armed crossing                        | `] next file` / `[ prev file`  | the cursor's own actions, demoted |
-| a diff line                              | `c comment`                    | `v select`                        |
-| a line of a markdown file that previews  | `c comment`                    | `v select · m preview`            |
-| a live selection                         | `c comment`                    | `esc clear`                       |
-| a commented line                         | `e edit`                       | `d delete · n/N jump`             |
-| a fold                                   | `→ expand fold`                | —                                 |
-| an open markdown preview                 | `m source`                     | —                                 |
-| a file (file list)                       | `tab diff`                     | `z hide`                          |
-| a collapsed directory                    | `→ expand`                     | `z hide`                          |
-| an expanded directory                    | `← collapse`                   | `z hide`                          |
-| nothing to review (awaiting turn)        | `u/b/t scope`                  | `r refresh`                       |
-| the `branch` scope with no base          | `B pick base`                  | `u/t scope · r refresh`           |
-| an empty read pane, navigator hidden     | `z show`                       | `tab files`                       |
+| cursor on                               | primary                       | also                                 |
+| --------------------------------------- | ----------------------------- | ------------------------------------ |
+| an armed crossing                       | `] next file` / `[ prev file` | the cursor's own actions, demoted    |
+| a diff line                             | `c comment`                   | `v select · e edit file`             |
+| a line of a markdown file that previews | `c comment`                   | `v select · m preview · e edit file` |
+| a live selection                        | `c comment`                   | `esc clear`                          |
+| a commented line                        | `e edit`                      | `d delete · n/N jump`                |
+| a fold                                  | `→ expand fold`               | `e edit file`                        |
+| an open markdown preview                | `m source`                    | `e edit file`                        |
+| a file (file list)                      | `tab diff`                    | `e edit file · z hide`               |
+| a collapsed directory                   | `→ expand`                    | `z hide`                             |
+| an expanded directory                   | `← collapse`                  | `z hide`                             |
+| nothing to review (awaiting turn)       | `u/b/t scope`                 | `r refresh`                          |
+| the `branch` scope with no base         | `B pick base`                 | `u/t scope · r refresh`              |
+| an empty read pane, navigator hidden    | `z show`                      | `tab files`                          |
 
 - An armed crossing outranks the cursor's own action and leads row 1, since only the footer says the next press leaves the file. It is the one movement key on row 1 (see Changeset traversal). While it is armed, the `move` band drops the hunk step, whose key row 1 now shows.
 - While the navigator is hidden, `z show` joins row 1's actions, so the collapsed footer always names the way back. Visible, `z hide` joins them only while the file list holds focus, whose row 1 has the room. Elsewhere it waits in the `go` band.

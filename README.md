@@ -132,7 +132,8 @@ The keys below are defaults. You can rebind every action, even to several keys a
 | --- | --- |
 | `v` | Select lines |
 | `c` | Comment on line or selection |
-| `e` `d` | Edit / delete comment |
+| `e` | Edit the comment under the cursor, or open the file in your editor |
+| `d` | Delete comment |
 | `n` `N` | Jump to next / previous comment |
 | `l` | List all comments |
 | `s` | Send comments to agent |
@@ -218,6 +219,7 @@ toggle_placement = "overlay"
 toggle_direction = "down"
 auto_open = false
 github_host = "github.example.com"
+editor = "code -g {file}:{line}"
 
 [keybindings]
 comment = ["c", "ㅊ"]
@@ -275,6 +277,32 @@ like git, a SHA pins its commit, and the header shows what resolved: `vs HEAD~2 
 A picked branch that is gone (deleted after a stacked review, or a typo) is skipped, and the
 header says so: `vs main · dev missing`. When nothing resolves, the scope stays empty and the
 header reads `no base`, with the footer offering `B pick base`.
+
+### Editor
+
+`e` opens what the cursor names in your editor: the file you're reading at the line you're on,
+or the selected file in the navigator. On a line you've already commented, `e` still edits the
+comment. reviewr steps aside while the editor runs and refreshes when you come back.
+
+Set `$EDITOR` (or `$VISUAL`) and it just works. reviewr knows how each editor wants its line
+number, and adds the wait flag graphical editors need so they don't return before you've typed:
+
+| editor | how it's called |
+| --- | --- |
+| vim, nvim, nano, micro, kakoune, emacs | `+41 path` |
+| helix, Zed, Sublime Text | `path:41` |
+| VS Code, Cursor, Windsurf, VSCodium | `--goto path:41 --wait` |
+| JetBrains IDEs, Xcode, Kate, TextMate | `--line 41 path --wait` |
+
+For anything else, spell the command out yourself:
+
+```toml
+editor = "myeditor --at {line} {file}"
+```
+
+`{file}` and `{line}` are substituted wherever they appear. This value is the whole command, so
+reviewr adds nothing to it. With no `editor` key and no `$EDITOR`, `e` tells you what to set
+rather than opening something you didn't choose.
 
 ### Keybindings
 

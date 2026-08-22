@@ -1,0 +1,291 @@
+//! Resolving the editor command for `edit` on a file (`specs/input.md` Edit).
+//!
+//! Two sources, in order: the `editor` config key, whose value is a template the user owns
+//! outright, and `$VISUAL`/`$EDITOR`, whose binary name selects the argument dialect below.
+//! This module is process-free: it builds an argv, and `src/lib.rs` spawns it.
+
+use std::path::Path;
+
+/// How an editor spells "open this file at this line".
+///
+/// Four shapes cover every editor in [`DIALECTS`]. Sources: lazygit's editor presets, Julia's
+/// `InteractiveUtils` editor table, and each vendor's own CLI documentation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LineArg {
+    /// `+42 <path>` — the vi family, nano, micro, kakoune, emacs, `BBEdit`, gedit.
+    Plus,
+    /// `<path>:42` — helix, Zed, Sublime Text.
+    Suffix,
+    /// `-g <path>:42` — the VS Code family.
+    Goto,
+    /// `--line 42 <path>` — the `JetBrains` family, Xcode, Kate, `TextMate`.
+    Flag,
+}
+
+/// One editor family: the binary names that select it, how it takes a line, and the flag that
+/// makes it block until the file closes.
+///
+/// A graphical editor returns the moment it hands the file to a running instance, so without
+/// its wait flag reviewr would repaint before the reviewer typed anything. A terminal editor
+/// owns the pane until it exits and needs none.
+struct Dialect {
+    names: &'static [&'static str],
+    line: LineArg,
+    wait: Option<&'static str>,
+}
+
+const DIALECTS: &[Dialect] = &[
+    // Terminal editors. Each holds the pane until it exits, so none takes a wait flag.
+    Dialect {
+        names: &["vi", "vim", "nvim", "mvim", "lvim", "vis", "joe"],
+        line: LineArg::Plus,
+        wait: None,
+    },
+    Dialect { names: &["nano", "micro", "kak"], line: LineArg::Plus, wait: None },
+    Dialect { names: &["emacs", "emacsclient"], line: LineArg::Plus, wait: None },
+    Dialect { names: &["hx", "helix"], line: LineArg::Suffix, wait: None },
+    // Graphical editors.
+    Dialect {
+        names: &["code", "code-insiders", "codium", "vscodium", "cursor", "windsurf", "positron"],
+        line: LineArg::Goto,
+        wait: Some("--wait"),
+    },
+    Dialect { names: &["subl", "sublime_text"], line: LineArg::Suffix, wait: Some("--wait") },
+    Dialect { names: &["zed"], line: LineArg::Suffix, wait: Some("--wait") },
+    Dialect { names: &["bbedit", "gedit"], line: LineArg::Plus, wait: Some("--wait") },
+    Dialect { names: &["xed", "mate"], line: LineArg::Flag, wait: Some("--wait") },
+    Dialect { names: &["kate"], line: LineArg::Flag, wait: Some("--block") },
+    Dialect {
+        names: &[
+            "idea",
+            "pycharm",
+            "webstorm",
+            "goland",
+            "clion",
+            "phpstorm",
+            "rubymine",
+            "rider",
+            "datagrip",
+            "rustrover",
+            "dataspell",
+            "fleet",
+        ],
+        line: LineArg::Flag,
+        wait: Some("--wait"),
+    },
+];
+
+/// A resolved editor invocation: the program to run and its full argument list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditorCommand {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+/// The command that opens `path` at `line`, or `None` when no editor is configured.
+///
+/// `configured` is the `editor` config key. Its value is the whole command, and `{file}` and
+/// `{line}` substitute into it wherever they appear. A template naming neither placeholder gets
+/// the path appended, so a bare `editor = "hx"` still opens the file.
+///
+/// With no key, `visual` then `editor_env` supply the command, and its binary name selects a
+/// dialect. An unrecognized binary opens the file without a line rather than guessing a flag it
+/// may not accept.
+pub fn resolve(
+    configured: Option<&str>,
+    visual: Option<&str>,
+    editor_env: Option<&str>,
+    path: &Path,
+    line: u32,
+) -> Option<EditorCommand> {
+    // An absolute path can never be read as a flag, so no dialect needs a `--` guard.
+    let file = path.to_string_lossy().into_owned();
+    if let Some(template) = configured.filter(|t| !t.trim().is_empty()) {
+        return Some(from_template(template, &file, line));
+    }
+    let value = visual
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| editor_env.filter(|v| !v.trim().is_empty()))?;
+    let mut words = value.split_whitespace().map(str::to_owned);
+    let program = words.next()?;
+    let mut args: Vec<String> = words.collect();
+    let Some(dialect) = dialect_for(&program) else {
+        args.push(file);
+        return Some(EditorCommand { program, args });
+    };
+    // The reviewer's own flags win: a `$EDITOR` that already waits never waits twice, because
+    // not every editor's parser accepts a repeated flag.
+    if let Some(wait) = dialect.wait.filter(|w| !args.iter().any(|a| a == w)) {
+        args.push(wait.to_owned());
+    }
+    match dialect.line {
+        LineArg::Plus => {
+            args.push(format!("+{line}"));
+            args.push(file);
+        }
+        LineArg::Suffix => args.push(format!("{file}:{line}")),
+        LineArg::Goto => {
+            args.push("-g".to_owned());
+            args.push(format!("{file}:{line}"));
+        }
+        LineArg::Flag => {
+            args.push("--line".to_owned());
+            args.push(line.to_string());
+            args.push(file);
+        }
+    }
+    Some(EditorCommand { program, args })
+}
+
+/// The dialect for a binary, matched on its file name so an absolute `$EDITOR` resolves too.
+fn dialect_for(program: &str) -> Option<&'static Dialect> {
+    let name = Path::new(program).file_name()?.to_string_lossy().to_lowercase();
+    DIALECTS.iter().find(|d| d.names.contains(&name.as_str()))
+}
+
+/// Build the command from a user template, substituting every `{file}` and `{line}`.
+fn from_template(template: &str, file: &str, line: u32) -> EditorCommand {
+    let named_file = template.contains("{file}");
+    let mut words = template
+        .split_whitespace()
+        .map(|w| w.replace("{file}", file).replace("{line}", &line.to_string()));
+    let program = words.next().unwrap_or_default();
+    let mut args: Vec<String> = words.collect();
+    if !named_file {
+        args.push(file.to_owned());
+    }
+    EditorCommand { program, args }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn p() -> PathBuf {
+        PathBuf::from("/repo/src/lib.rs")
+    }
+
+    fn env(value: &str) -> Option<EditorCommand> {
+        resolve(None, None, Some(value), &p(), 41)
+    }
+
+    fn argv(cmd: &EditorCommand) -> String {
+        format!("{} {}", cmd.program, cmd.args.join(" "))
+    }
+
+    #[test]
+    fn terminal_editors_take_a_plus_line_and_never_wait() {
+        for name in ["vi", "vim", "nvim", "nano", "micro", "kak", "emacs"] {
+            assert_eq!(
+                argv(&env(name).unwrap()),
+                format!("{name} +41 /repo/src/lib.rs"),
+                "{name} takes `+LINE` before the path and owns the pane already"
+            );
+        }
+    }
+
+    #[test]
+    fn helix_takes_the_line_as_a_path_suffix() {
+        assert_eq!(argv(&env("hx").unwrap()), "hx /repo/src/lib.rs:41");
+        assert_eq!(argv(&env("helix").unwrap()), "helix /repo/src/lib.rs:41");
+    }
+
+    #[test]
+    fn graphical_editors_wait_so_the_pane_does_not_repaint_first() {
+        // The VS Code family, its forks included, takes `--goto path:line`.
+        for name in ["code", "code-insiders", "codium", "cursor", "windsurf"] {
+            assert_eq!(
+                argv(&env(name).unwrap()),
+                format!("{name} --wait -g /repo/src/lib.rs:41"),
+                "{name} returns immediately without its wait flag"
+            );
+        }
+        assert_eq!(argv(&env("zed").unwrap()), "zed --wait /repo/src/lib.rs:41");
+        assert_eq!(argv(&env("subl").unwrap()), "subl --wait /repo/src/lib.rs:41");
+        assert_eq!(argv(&env("bbedit").unwrap()), "bbedit --wait +41 /repo/src/lib.rs");
+        assert_eq!(argv(&env("xed").unwrap()), "xed --wait --line 41 /repo/src/lib.rs");
+        assert_eq!(argv(&env("mate").unwrap()), "mate --wait --line 41 /repo/src/lib.rs");
+        // Kate blocks under its own flag name.
+        assert_eq!(argv(&env("kate").unwrap()), "kate --block --line 41 /repo/src/lib.rs");
+        // Every JetBrains launcher shares one CLI.
+        for name in ["idea", "pycharm", "webstorm", "goland", "rider"] {
+            assert_eq!(
+                argv(&env(name).unwrap()),
+                format!("{name} --wait --line 41 /repo/src/lib.rs")
+            );
+        }
+    }
+
+    #[test]
+    fn a_wait_flag_the_reviewer_already_set_is_not_repeated() {
+        // `EDITOR="code --wait"` is the documented git setup, so it arrives already waiting.
+        assert_eq!(argv(&env("code --wait").unwrap()), "code --wait -g /repo/src/lib.rs:41");
+        assert_eq!(argv(&env("code -w").unwrap()), "code -w --wait -g /repo/src/lib.rs:41");
+    }
+
+    #[test]
+    fn extra_flags_survive_and_an_absolute_binary_still_matches() {
+        assert_eq!(
+            argv(&env("nvim --clean").unwrap()),
+            "nvim --clean +41 /repo/src/lib.rs",
+            "the reviewer's own flags come before the ones the dialect adds"
+        );
+        assert_eq!(
+            argv(&env("/opt/homebrew/bin/nvim").unwrap()),
+            "/opt/homebrew/bin/nvim +41 /repo/src/lib.rs",
+            "the dialect matches the file name, not the whole path"
+        );
+        assert_eq!(argv(&env("VIM").unwrap()), "VIM +41 /repo/src/lib.rs", "the match is caseless");
+    }
+
+    #[test]
+    fn an_unknown_editor_opens_the_file_without_a_line() {
+        assert_eq!(
+            argv(&env("myeditor").unwrap()),
+            "myeditor /repo/src/lib.rs",
+            "guessing a flag an unknown editor may not accept would open a stray buffer"
+        );
+    }
+
+    #[test]
+    fn visual_outranks_editor_and_blank_values_fall_through() {
+        assert_eq!(
+            argv(&resolve(None, Some("hx"), Some("vim"), &p(), 41).unwrap()),
+            "hx /repo/src/lib.rs:41"
+        );
+        assert_eq!(
+            argv(&resolve(None, Some("  "), Some("vim"), &p(), 41).unwrap()),
+            "vim +41 /repo/src/lib.rs"
+        );
+        assert_eq!(
+            resolve(None, None, None, &p(), 41),
+            None,
+            "no editor anywhere resolves nothing"
+        );
+        assert_eq!(resolve(None, Some(""), Some(" "), &p(), 41), None);
+    }
+
+    #[test]
+    fn the_config_template_owns_the_whole_command() {
+        assert_eq!(
+            argv(&resolve(Some("code -g {file}:{line}"), None, Some("vim"), &p(), 41).unwrap()),
+            "code -g /repo/src/lib.rs:41",
+            "the configured template outranks the environment and takes no added flags"
+        );
+        assert_eq!(
+            argv(&resolve(Some("idea --line {line} --wait {file}"), None, None, &p(), 41).unwrap()),
+            "idea --line 41 --wait /repo/src/lib.rs"
+        );
+        assert_eq!(
+            argv(&resolve(Some("hx"), None, None, &p(), 41).unwrap()),
+            "hx /repo/src/lib.rs",
+            "a template naming no placeholder still gets the path"
+        );
+        assert_eq!(
+            argv(&resolve(Some("myed {line} {file} {line}"), None, None, &p(), 41).unwrap()),
+            "myed 41 /repo/src/lib.rs 41",
+            "every occurrence substitutes"
+        );
+    }
+}

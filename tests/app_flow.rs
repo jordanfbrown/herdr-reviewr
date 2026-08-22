@@ -774,6 +774,63 @@ fn the_footer_offers_the_action_for_what_the_cursor_is_on() {
 }
 
 #[test]
+fn the_footer_offers_edit_file_wherever_the_key_opens_one() {
+    let mut app = composing_app();
+    app.cancel_comment(); // diff focus, on a changed line, no comment yet
+    let has = |a: &App| a.footer_bands().iter().any(|&(x, _)| x == FooterAction::EditFile);
+    assert!(has(&app), "an uncommented diff line offers edit file");
+
+    comment_on(&mut app, '+', "note");
+    assert_eq!(primary(&app), FooterAction::EditComment, "a commented line leads with the comment");
+    assert!(!has(&app), "and never advertises the file, since the key edits the comment there");
+
+    app.focus = Focus::Files;
+    assert!(has(&app), "a navigator file row offers it too");
+}
+
+#[test]
+fn edit_opens_the_file_under_the_cursor_and_the_comment_when_one_is_there() {
+    let r = edited_repo();
+    let mut app = app_on(&r);
+    let keymap = Keymap::default();
+    app.focus = Focus::Diff;
+
+    // `e` on an uncommented line names the worktree file, at that line, absolutely.
+    press(&mut app, &keymap, KeyCode::Char('e'));
+    let request = app.editor_request.take().expect("`e` names the file under the cursor");
+    assert!(request.path.is_absolute(), "the editor is handed an absolute path");
+    assert!(request.path.ends_with("a.rs"));
+    assert!(!app.composing(), "and no comment box opens");
+
+    // The same key on a commented line edits the comment instead.
+    comment_on(&mut app, '+', "note");
+    press(&mut app, &keymap, KeyCode::Char('e'));
+    assert!(app.composing(), "the comment under the cursor claims the key");
+    assert!(app.editor_request.is_none(), "so no file is requested");
+    app.cancel_comment();
+
+    // A directory row names nothing.
+    app.focus = Focus::Files;
+    press(&mut app, &keymap, KeyCode::Char('e'));
+    let from_row = app.editor_request.take().expect("a file row names its file");
+    assert!(from_row.path.ends_with("a.rs"));
+    assert_eq!(from_row.line, 1, "a navigator row names no line, so the file opens at its start");
+}
+
+#[test]
+fn a_rebound_edit_key_carries_the_file_editor_with_it() {
+    let r = edited_repo();
+    let mut app = app_on(&r);
+    app.focus = Focus::Diff;
+    let keymap = Keymap::resolve(&[(Action::Edit, vec![Key::plain('E')])]).unwrap();
+
+    press(&mut app, &keymap, KeyCode::Char('e'));
+    assert!(app.editor_request.is_none(), "the default key no longer acts");
+    press(&mut app, &keymap, KeyCode::Char('E'));
+    assert!(app.editor_request.is_some(), "one action moves both meanings together");
+}
+
+#[test]
 fn esc_clears_a_live_selection() {
     let mut app = composing_app();
     app.cancel_comment();

@@ -13,6 +13,7 @@ pub mod azure_devops;
 pub mod browser;
 pub mod config;
 pub mod diff;
+pub mod editor;
 pub mod export;
 pub mod file_list;
 pub mod forge;
@@ -49,7 +50,10 @@ use ratatui::crossterm::event::{
     MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::supports_keyboard_enhancement;
+use ratatui::crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    supports_keyboard_enhancement,
+};
 use ratatui::layout::Rect;
 
 use crate::app::{App, Focus, Mode};
@@ -75,19 +79,11 @@ pub fn run() -> Result<()> {
     let mut app = app_for(&cfg, &initial_config);
 
     let mut terminal = ratatui::init();
-    // Bracketed paste so a multi-line paste arrives as one event, not raw keystrokes whose
-    // embedded newlines would submit the comment early.
-    let _ = execute!(io::stdout(), EnableMouseCapture, EnableBracketedPaste);
     // The kitty keyboard protocol reports modifiers on keys the legacy encoding drops — most
     // notably Ctrl/Alt+arrows — so word-jump by arrow works where the terminal supports it.
     let kbd = supports_keyboard_enhancement().unwrap_or(false);
     logln!("keyboard enhancement supported={kbd}");
-    if kbd {
-        let _ = execute!(
-            io::stdout(),
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        );
-    }
+    enter_terminal_modes(kbd);
     // Render before the first load, so a slow, failing, or hung `git` scan shows the reviewr UI
     // instead of the blank pane herdr leaves when the process blocks or exits before it renders
     // (issue #4). Paint the empty frame first; then the initial load, non-fatal — an error
@@ -143,13 +139,90 @@ pub fn run() -> Result<()> {
     result
 }
 
-/// Leave the alternate screen and release terminal input modes before any bounded worker drain.
-fn restore_terminal(kbd: bool) {
+/// Claim the terminal input modes the event loop reads. The mirror of [`restore_terminal`], so
+/// startup and a resume after the editor rebuild exactly the same stack (`specs/input.md` Edit).
+///
+/// Bracketed paste so a multi-line paste arrives as one event, not raw keystrokes whose embedded
+/// newlines would submit the comment early.
+fn enter_terminal_modes(kbd: bool) {
+    let _ = execute!(io::stdout(), EnableMouseCapture, EnableBracketedPaste);
+    if kbd {
+        let _ = execute!(
+            io::stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        );
+    }
+}
+
+/// Release the modes [`enter_terminal_modes`] claimed, in reverse.
+fn leave_terminal_modes(kbd: bool) {
     if kbd {
         let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
     }
     let _ = execute!(io::stdout(), DisableMouseCapture, DisableBracketedPaste);
+}
+
+/// Leave the alternate screen and release terminal input modes before any bounded worker drain.
+fn restore_terminal(kbd: bool) {
+    leave_terminal_modes(kbd);
     ratatui::restore();
+}
+
+/// Service one `edit` request that named a file (`specs/input.md` Edit).
+///
+/// The pane suspends down to a plain terminal, so the editor owns it outright, then rebuilds the
+/// same mode stack and repaints. The file may have changed on disk, so a world refresh reconciles
+/// the diff in place (`overview.md` Continuity). reviewr itself still writes nothing.
+fn run_editor(
+    terminal: &mut DefaultTerminal,
+    app: &mut App,
+    configured: Option<&str>,
+    kbd: bool,
+) -> Result<()> {
+    let Some(target) = app.editor_request.take() else { return Ok(()) };
+    let Some(command) = editor::resolve(
+        configured,
+        std::env::var("VISUAL").ok().as_deref(),
+        std::env::var("EDITOR").ok().as_deref(),
+        &target.path,
+        target.line,
+    ) else {
+        app.status = "set `editor` in the plugin config, or $EDITOR".into();
+        return Ok(());
+    };
+    logln!("editor run {} {:?}", command.program, command.args);
+    // A herdr pane may launch with a stripped PATH, so the binary resolves through the same
+    // common locations every other host tool does (`specs/herdr-host.md`).
+    let mut cmd = proc::command(&command.program);
+    cmd.args(&command.args);
+
+    leave_terminal_modes(kbd);
+    let _ = execute!(io::stdout(), LeaveAlternateScreen);
+    let _ = disable_raw_mode();
+
+    let launched = cmd.status();
+
+    let _ = enable_raw_mode();
+    let _ = execute!(io::stdout(), EnterAlternateScreen);
+    enter_terminal_modes(kbd);
+    // The editor's own exit can leave keystrokes queued; they belong to it, not to the review.
+    while event::poll(Duration::ZERO)? {
+        let _ = event::read();
+    }
+    let _ = terminal.clear();
+
+    match launched {
+        Ok(status) if status.success() => {
+            let shown = target.path.strip_prefix(&app.repo).unwrap_or(&target.path);
+            app.status = format!("edited {}", shown.display());
+            app.request_world_refresh(false, false);
+            app.refresh_commanded = true;
+        }
+        Ok(status) => app.status = format!("editor exited with {status}"),
+        Err(e) => app.status = format!("editor failed: {e}"),
+    }
+    terminal.draw(|f| ui::render(f, app))?;
+    Ok(())
 }
 
 /// The reviewed repository, resolved to its git top level. Every `App` goes through this,
@@ -307,6 +380,12 @@ impl PaintedFrameSnapshot {
             && self.navigator_position == app.navigator_position
             && self.navigator_side_pct == app.navigator_side_pct
             && self.navigator_stack_pct == app.navigator_stack_pct
+    }
+
+    /// This frame's `editor` command, so one press uses one validated snapshot
+    /// (`specs/config.md` CFG-ONE-SNAPSHOT).
+    fn editor(&self) -> Option<&str> {
+        self.plugin_config.as_ref().and_then(PluginConfig::editor)
     }
 
     fn keymap(&self) -> &Keymap {
@@ -1173,6 +1252,11 @@ fn event_loop(
             if app.config_error().is_none() {
                 app.tick_base_picker_probe();
             }
+            // An `edit` press named a file: suspend, run the editor, resume, repaint
+            // (`specs/input.md` Edit).
+            if app.editor_request.is_some() {
+                run_editor(terminal, app, painted_frame.editor(), kbd)?;
+            }
             if app.should_quit {
                 break;
             }
@@ -1695,7 +1779,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent, area: Rect, keymap: &Keymap) -> 
             // `edit`/`delete` act on the comment under the diff cursor, so they only fire with
             // the diff focused — otherwise `delete` would silently drop a comment under an
             // off-screen cursor. (The comments-list overlay targets the highlighted row instead.)
-            K::Edit if app.focus == Focus::Diff => app.start_edit(),
+            // `edit` runs from either pane: the read pane's comment or line, the navigator's
+            // selected file (`specs/input.md` Edit).
+            K::Edit => app.start_edit(),
             K::Delete if app.focus == Focus::Diff => app.delete_comment(),
             K::Send => app.send_to_agent(),
             K::Copy => {
@@ -1707,8 +1793,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent, area: Rect, keymap: &Keymap) -> 
             K::Search => app.open_search(),
             K::Find => app.open_find(),
             K::Keys => app.toggle_keys(),
-            // `edit`/`delete` off the diff, and `open-pr` off the `PR` tab, are inert.
-            K::Edit | K::Delete | K::OpenPr => {}
+            // `delete` off the diff and `open-pr` off the `PR` tab are inert. `edit` is not:
+            // it reaches the navigator's file rows too (`specs/input.md` Edit).
+            K::Delete | K::OpenPr => {}
         }
         return Ok(());
     }

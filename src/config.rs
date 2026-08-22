@@ -66,7 +66,7 @@ impl Config {
     }
 }
 
-const PLUGIN_CONFIG_KEYS: [&str; 10] = [
+const PLUGIN_CONFIG_KEYS: [&str; 11] = [
     "theme",
     "default_scope",
     "navigator_position",
@@ -76,6 +76,7 @@ const PLUGIN_CONFIG_KEYS: [&str; 10] = [
     "github_host",
     "gitlab_host",
     "azure_devops_host",
+    "editor",
     "keybindings",
 ];
 
@@ -165,6 +166,7 @@ pub struct PluginConfig {
     github_host: Option<String>,
     gitlab_host: Option<String>,
     azure_devops_host: Option<String>,
+    editor: Option<String>,
     keymap: crate::keymap::Keymap,
 }
 
@@ -180,6 +182,7 @@ impl Default for PluginConfig {
             github_host: None,
             gitlab_host: None,
             azure_devops_host: None,
+            editor: None,
             keymap: crate::keymap::Keymap::default(),
         }
     }
@@ -233,6 +236,11 @@ impl PluginConfig {
         }
     }
 
+    /// The editor command template, `{file}` and `{line}` substituted (`specs/input.md` Edit).
+    pub fn editor(&self) -> Option<&str> {
+        self.editor.as_deref()
+    }
+
     /// The resolved keymap: the defaults with this snapshot's `[keybindings]` applied.
     pub fn keymap(&self) -> &crate::keymap::Keymap {
         &self.keymap
@@ -259,6 +267,7 @@ impl PluginConfig {
             "github_host": self.github_host,
             "gitlab_host": self.gitlab_host,
             "azure_devops_host": self.azure_devops_host,
+            "editor": self.editor,
             "keybindings": keybindings,
         })
     }
@@ -424,6 +433,13 @@ fn parse_plugin_config(path: &Path) -> Result<PluginConfig, PluginConfigError> {
     }
     if let Some(value) = table.get("azure_devops_host") {
         config.azure_devops_host = Some(parse_forge_host(path, "azure_devops_host", value)?);
+    }
+    if let Some(value) = table.get("editor") {
+        let command = value
+            .as_str()
+            .filter(|c| !c.trim().is_empty())
+            .ok_or_else(|| value_error(path, "editor", "a non-empty command"))?;
+        config.editor = Some(command.to_owned());
     }
     // A hostname is recognized by at most one forge; a cross-key collision is an invalid
     // value under CFG-WHOLE-FILE (`specs/config.md`). Scanned as a set so a new key joins by
@@ -711,6 +727,23 @@ mod tests {
     }
 
     #[test]
+    fn the_editor_key_carries_its_whole_command_and_reaches_the_resolved_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "editor = \"code -g {file}:{line}\"\n").unwrap();
+        let config = super::plugin_config_in(dir.path()).unwrap();
+        assert_eq!(config.editor(), Some("code -g {file}:{line}"));
+        assert_eq!(config.to_json()["editor"], "code -g {file}:{line}");
+
+        // Unset, the key resolves to null and the environment supplies the editor instead
+        // (`specs/input.md` Edit).
+        std::fs::write(&path, "theme = \"tokyo-night\"\n").unwrap();
+        let config = super::plugin_config_in(dir.path()).unwrap();
+        assert_eq!(config.editor(), None);
+        assert!(config.to_json()["editor"].is_null());
+    }
+
+    #[test]
     fn unknown_key_and_syntax_error_fail_the_whole_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
@@ -742,6 +775,9 @@ mod tests {
             ("toggle_direction = \"left\"\n", "`toggle_direction`"),
             ("auto_open = \"yes\"\n", "`auto_open`"),
             ("github_host = \"https://github.example.com\"\n", "`github_host`"),
+            ("editor = \"\"\n", "`editor`"),
+            ("editor = \"   \"\n", "`editor`"),
+            ("editor = 42\n", "`editor`"),
             ("github_host = \"github.com\"\n", "`github_host`"),
             ("github_host = \"gitlab.com\"\n", "`github_host`"),
             ("gitlab_host = \"gitlab.com\"\n", "`gitlab_host`"),

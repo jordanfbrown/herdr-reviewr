@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`e` opens the file you're looking at in your editor.** From the diff, the File view, or the
+  navigator, `e` opens that file at the line under the cursor and refreshes when you return. On a
+  line you've already commented, `e` still edits the comment. Set `$EDITOR` and it works: reviewr
+  knows how vim, helix, VS Code, Cursor, Zed, Sublime, the JetBrains IDEs, and others want their
+  line number, and adds the wait flag graphical editors need. The new `editor` config key takes a
+  `{file}`/`{line}` template for anything else. Shaped by @trsxxii (#33) and @jorgerojas26 (#79).
+
 ## [0.34.0] — 2026-08-20
 
 ### Added
