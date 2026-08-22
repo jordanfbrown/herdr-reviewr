@@ -203,6 +203,9 @@ fn run_editor(
     // later left-drag. Both end here.
     app.cancel_gesture();
     app.finish_divider_drag();
+    // No motion arrives while the editor runs either, so the hover affordance would repaint
+    // from a cell the pointer has almost certainly left.
+    app.hover = None;
 
     leave_terminal_modes(kbd);
     // Every Normal-mode frame hides the cursor, so the editor would inherit a terminal without

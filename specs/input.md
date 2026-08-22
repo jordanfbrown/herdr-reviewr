@@ -118,7 +118,7 @@ The steps and the skips share the rest:
 - The editor command is the `editor` config key (`config.md`). With neither that key nor `$VISUAL` nor `$EDITOR` set, the press names what to set and opens nothing. reviewr never guesses an editor.
 - The editor's own name picks its arguments. Four spellings cover the editors reviewr knows: `+LINE path` for the vi family, nano, micro, kakoune, emacs, BBEdit, and gedit, `path:LINE` for helix, Zed, and Sublime Text, `-g path:LINE` for the VS Code family and its forks, and `--line LINE path` for the JetBrains family, Xcode, Kate, and TextMate. A name reviewr does not know opens the file without a line.
 - A graphical editor returns as soon as it hands the file to a running window, so reviewr adds its wait flag. A command that already carries that flag, in either spelling, gets no second one. A terminal editor holds the pane already and gets none.
-- The path reviewr passes is absolute, so no file name reads as a flag.
+- The path reviewr passes is absolute, so no file name reads as a flag. A notice diff paints no rows, so it opens at the file's start, the same line the navigator names for it.
 - Returning restores the open file, the cursor, the scroll, the folds, and the footer's expansion.
 - A finished edit refreshes the changeset and samples the turn, so tracking resumes without waiting for the next poll. A turn that both began and ended while the editor held the loop is missed like any turn shorter than a poll (`herdr-host.md`). The diff reconciles in place (`overview.md` Continuity).
 - A live mouse gesture and a divider drag both end at the press, because mouse reporting stops while the editor runs and neither release would arrive (`text-selection.md`, `tui.md`).

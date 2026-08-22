@@ -304,6 +304,9 @@ For anything else, spell the command out yourself:
 editor = "myeditor --at {line} {file}"
 ```
 
+Quote a path that contains a space — `"/Applications/Sublime Text.app/.../subl"` — in the config
+key or in `$EDITOR`. No shell runs the command, so quoting is the only escape.
+
 `{file}` and `{line}` are substituted wherever they appear. This value is the whole command, so
 reviewr adds nothing to it — including the wait flag, which a graphical editor needs or it hands
 the file to its window and returns before you've typed. With no `editor` key and no `$EDITOR`, `e` tells you what to set

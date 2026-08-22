@@ -69,7 +69,13 @@ const DIALECTS: &[Dialect] = &[
     Dialect { names: &["subl", "sublime_text"], line: LineArg::Suffix, wait: WAIT },
     Dialect { names: &["zed"], line: LineArg::Suffix, wait: WAIT },
     Dialect { names: &["bbedit", "gedit"], line: LineArg::Plus, wait: WAIT },
-    Dialect { names: &["xed", "mate"], line: LineArg::Flag, wait: WAIT },
+    Dialect { names: &["mate"], line: LineArg::Flag, wait: WAIT },
+    // `xed` names two editors. On macOS it is Xcode's opener, which takes `--line`. On Linux it
+    // is Mint's X-Apps editor, a gedit fork that takes `+LINE` and rejects `--line` outright.
+    #[cfg(target_os = "macos")]
+    Dialect { names: &["xed"], line: LineArg::Flag, wait: WAIT },
+    #[cfg(not(target_os = "macos"))]
+    Dialect { names: &["xed"], line: LineArg::Plus, wait: WAIT },
     Dialect { names: &["kate"], line: LineArg::Flag, wait: BLOCK },
     Dialect {
         names: &[
@@ -122,7 +128,7 @@ pub fn resolve(
     let value = visual
         .filter(|v| !v.trim().is_empty())
         .or_else(|| editor_env.filter(|v| !v.trim().is_empty()))?;
-    let mut words = value.split_whitespace().map(str::to_owned);
+    let mut words = split_command(value).into_iter();
     let program = words.next()?;
     let mut args: Vec<String> = words.collect();
     let Some(dialect) = dialect_for(&program) else {
@@ -153,6 +159,42 @@ pub fn resolve(
     Some(EditorCommand { program, args })
 }
 
+/// Split a command into words, honouring quotes.
+///
+/// A plain whitespace split cannot express `/Applications/Sublime Text.app/.../subl`, which is
+/// how macOS spells most editor paths. Quoting is the only escape, since no shell runs the
+/// command. A quote closes at its match or at the end of the string.
+fn split_command(value: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut started = false;
+    let mut quote: Option<char> = None;
+    for ch in value.chars() {
+        match quote {
+            Some(q) if ch == q => quote = None,
+            Some(_) => word.push(ch),
+            None if ch == '"' || ch == '\'' => {
+                quote = Some(ch);
+                started = true;
+            }
+            None if ch.is_whitespace() => {
+                if started {
+                    words.push(std::mem::take(&mut word));
+                    started = false;
+                }
+            }
+            None => {
+                word.push(ch);
+                started = true;
+            }
+        }
+    }
+    if started {
+        words.push(word);
+    }
+    words
+}
+
 /// The dialect for a binary, matched on its file name so an absolute `$EDITOR` resolves too.
 fn dialect_for(program: &str) -> Option<&'static Dialect> {
     let name = Path::new(program).file_name()?.to_string_lossy().to_lowercase();
@@ -162,8 +204,8 @@ fn dialect_for(program: &str) -> Option<&'static Dialect> {
 /// Build the command from a user template, substituting every `{file}` and `{line}`.
 fn from_template(template: &str, file: &str, line: u32) -> EditorCommand {
     let named_file = template.contains("{file}");
-    let mut words = template
-        .split_whitespace()
+    let mut words = split_command(template)
+        .into_iter()
         .map(|w| w.replace("{file}", file).replace("{line}", &line.to_string()));
     let program = words.next().unwrap_or_default();
     let mut args: Vec<String> = words.collect();
@@ -220,8 +262,12 @@ mod tests {
         assert_eq!(argv(&env("zed").unwrap()), "zed --wait /repo/src/lib.rs:41");
         assert_eq!(argv(&env("subl").unwrap()), "subl --wait /repo/src/lib.rs:41");
         assert_eq!(argv(&env("bbedit").unwrap()), "bbedit --wait +41 /repo/src/lib.rs");
-        assert_eq!(argv(&env("xed").unwrap()), "xed --wait --line 41 /repo/src/lib.rs");
         assert_eq!(argv(&env("mate").unwrap()), "mate --wait --line 41 /repo/src/lib.rs");
+        // `xed` is Xcode's opener on macOS and Mint's gedit fork elsewhere, and they disagree.
+        #[cfg(target_os = "macos")]
+        assert_eq!(argv(&env("xed").unwrap()), "xed --wait --line 41 /repo/src/lib.rs");
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(argv(&env("xed").unwrap()), "xed --wait +41 /repo/src/lib.rs");
         // Kate blocks under its own flag name.
         assert_eq!(argv(&env("kate").unwrap()), "kate --block --line 41 /repo/src/lib.rs");
         // Every JetBrains launcher shares one CLI.
@@ -265,6 +311,36 @@ mod tests {
             "the dialect matches the file name, not the whole path"
         );
         assert_eq!(argv(&env("VIM").unwrap()), "VIM +41 /repo/src/lib.rs", "the match is caseless");
+    }
+
+    #[test]
+    fn a_quoted_path_with_spaces_stays_one_word() {
+        // The common macOS spelling. No shell runs the command, so quoting is the only escape.
+        let subl = "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl";
+        let cmd = env(&format!("\"{subl}\"")).unwrap();
+        assert_eq!(cmd.program, subl, "the whole quoted path is the program");
+        assert_eq!(
+            cmd.args,
+            ["--wait", "/repo/src/lib.rs:41"],
+            "and the quoted path's own name still picks the dialect"
+        );
+
+        // Single quotes too, and a quoted argument after the program.
+        let cmd = env(&format!("'{subl}' --project 'My Project.sublime-project'")).unwrap();
+        assert_eq!(cmd.program, subl);
+        assert_eq!(
+            cmd.args,
+            ["--project", "My Project.sublime-project", "--wait", "/repo/src/lib.rs:41"]
+        );
+
+        // The config template quotes the same way.
+        let cmd =
+            resolve(Some("'/opt/my editor' --at {line} {file}"), None, None, &p(), 41).unwrap();
+        assert_eq!(cmd.program, "/opt/my editor");
+        assert_eq!(cmd.args, ["--at", "41", "/repo/src/lib.rs"]);
+
+        // An unterminated quote closes at the end rather than dropping the word.
+        assert_eq!(env("\"/opt/my editor").unwrap().program, "/opt/my editor");
     }
 
     #[test]

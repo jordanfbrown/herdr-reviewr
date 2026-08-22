@@ -3021,9 +3021,14 @@ impl App {
             return Some((path, 1));
         }
         // The read pane's line under the cursor. A deletion and a fold carry no worktree
-        // number of their own, so the nearest numbered row above names the line.
-        let line =
-            self.visible.get(..=self.diff_cursor)?.iter().rev().find_map(Row::new_no).unwrap_or(1);
+        // number of their own, so the nearest numbered row above names the line. A notice
+        // diff, binary or over budget, paints no rows at all and opens at the file's start,
+        // the same line the navigator names for it.
+        let line = self
+            .visible
+            .get(..=self.diff_cursor)
+            .and_then(|above| above.iter().rev().find_map(Row::new_no))
+            .unwrap_or(1);
         Some((path, line))
     }
 
@@ -4800,6 +4805,30 @@ mod tests {
             vec![crate::diff::Row::Deletion { old_no: 3, spans: Vec::new(), emphasis: Vec::new() }];
         app.diff_cursor = 0;
         assert_eq!(app.edit_file_target(), Some(("src/lib.rs".into(), 1)));
+    }
+
+    #[test]
+    fn edit_names_a_notice_diff_at_its_start_from_either_pane() {
+        // A binary or over-budget file paints no rows, so the read pane has no line to read.
+        // It opens at the file's start rather than saying nothing while the navigator opens it.
+        use crate::file_list::{Row as ListRow, RowKind};
+        let mut app = edit_app();
+        app.visible.clear();
+        app.diff_cursor = 0;
+        assert_eq!(app.edit_file_target(), Some(("src/lib.rs".into(), 1)), "from the read pane");
+
+        app.focus = crate::Focus::Files;
+        app.file_rows = vec![ListRow {
+            depth: 1,
+            name: "lib.rs".into(),
+            kind: RowKind::File { index: 0, annotation: None },
+            ignored: false,
+        }];
+        assert_eq!(
+            app.edit_file_target(),
+            Some(("src/lib.rs".into(), 1)),
+            "the navigator names the same line, so the two panes agree"
+        );
     }
 
     #[test]
