@@ -119,7 +119,8 @@ pub struct EditorCommand {
 ///
 /// With no key, `visual` then `editor_env` supply the command, and its binary name selects a
 /// dialect. An unrecognized binary opens the file without a line rather than guessing a flag it
-/// may not accept.
+/// may not accept. The binary name also decides who owns the pane, in every path
+/// ([`wants_terminal`]).
 pub fn resolve(
     configured: Option<&str>,
     visual: Option<&str>,
@@ -139,10 +140,9 @@ pub fn resolve(
     let program = words.next()?;
     let mut args: Vec<String> = words.collect();
     let Some(dialect) = dialect_for(&program) else {
-        // An editor reviewr does not know is assumed to want the pane, which is the outcome a
-        // terminal editor cannot survive being denied.
         args.push(file);
-        return Some(EditorCommand { program, args, wants_terminal: true });
+        let wants_terminal = wants_terminal(&program);
+        return Some(EditorCommand { program, args, wants_terminal });
     };
     // The reviewer's own flags win: a `$EDITOR` that already waits never waits twice, because
     // not every editor's parser accepts a repeated flag. Either spelling counts as already set.
@@ -165,7 +165,18 @@ pub fn resolve(
             args.push(file);
         }
     }
-    Some(EditorCommand { program, args, wants_terminal: dialect.wait.is_none() })
+    let wants_terminal = wants_terminal(&program);
+    Some(EditorCommand { program, args, wants_terminal })
+}
+
+/// Whether `program` draws in the pane it was launched from.
+///
+/// Its own name is the only signal, and it is the same signal in every path: an editor that
+/// takes a wait flag has a window of its own, and everything else — a binary reviewr does not
+/// know included — draws in the terminal. Unknown means the pane, which is the outcome a
+/// terminal editor cannot survive being denied (`specs/input.md` Edit).
+fn wants_terminal(program: &str) -> bool {
+    dialect_for(program).is_none_or(|d| d.wait.is_none())
 }
 
 /// Split a command into words, honouring quotes.
@@ -221,8 +232,8 @@ fn from_template(template: &str, file: &str, line: u32) -> EditorCommand {
     if !named_file {
         args.push(file.to_owned());
     }
-    // A configured command says nothing about which kind it is, so it is handed the pane.
-    EditorCommand { program, args, wants_terminal: true }
+    let wants_terminal = wants_terminal(&program);
+    EditorCommand { program, args, wants_terminal }
 }
 
 #[cfg(test)]
@@ -310,10 +321,14 @@ mod tests {
         for name in ["code", "cursor", "zed", "subl", "idea", "kate", "mate", "mvim"] {
             assert!(!env(name).unwrap().wants_terminal, "{name} opens a window");
         }
-        // Neither an unknown binary nor a configured command says which it is, and only one
-        // of the two guesses is survivable.
+        // A configured command spells its own arguments, but it is still one of these
+        // binaries, and the same name answers the same question.
+        let cfg = |t: &str| resolve(Some(t), None, None, &p(), 41).unwrap().wants_terminal;
+        assert!(!cfg("code --wait -g {file}:{line}"), "the documented example keeps the pane");
+        assert!(cfg("vim +{line} {file}"), "a terminal editor still takes it");
+        // An unknown binary says nothing, and only one of the two guesses is survivable.
         assert!(env("myeditor").unwrap().wants_terminal);
-        assert!(resolve(Some("myed {file}"), None, None, &p(), 41).unwrap().wants_terminal);
+        assert!(cfg("myed {file}"));
     }
 
     #[test]

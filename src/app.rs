@@ -2816,9 +2816,6 @@ impl App {
         })
     }
 
-    /// End the live gesture without a copy: the reflow-input cancel, and the dissolve of a
-    /// press that never moved or a lost gutter drag. The multi-click chain resets — only a
-    /// gesture's own release continues it — and the freeze lifts (specs/text-selection.md).
     /// Forget where the pointer was.
     ///
     /// Mouse reporting stops while an external program owns the terminal, so no release and no
@@ -2830,6 +2827,9 @@ impl App {
         self.hover = None;
     }
 
+    /// End the live gesture without a copy: the reflow-input cancel, and the dissolve of a
+    /// press that never moved or a lost gutter drag. The multi-click chain resets — only a
+    /// gesture's own release continues it — and the freeze lifts (specs/text-selection.md).
     pub(crate) fn cancel_gesture(&mut self) {
         if !self.gesture_active() {
             return; // nothing live: the multi-click chain survives unrelated input
@@ -2967,11 +2967,6 @@ impl App {
     /// `edit`: the comment under the cursor, else the file the cursor names
     /// (`specs/input.md` Edit). One key, resolved by what is actually there.
     pub fn start_edit(&mut self) {
-        // A live line selection is a gesture in progress. Neither branch may abandon the
-        // range, and the footer names neither key here (`specs/input.md` Edit).
-        if self.select_anchor.is_some() {
-            return;
-        }
         if self.comment_claims_edit() {
             self.edit_comment();
             return;
@@ -2982,11 +2977,14 @@ impl App {
     /// Whether a comment takes the key here, rather than the file.
     ///
     /// A comment claims it only where its card is on screen. With the navigator focused the
-    /// diff cursor is off screen, so the file row under the eye wins.
+    /// diff cursor is off screen, so the file row under the eye wins. A live line selection is
+    /// a gesture in progress on the diff, so nothing on the diff claims the key and the range
+    /// survives — the comments list, which owns the screen instead, still claims it
+    /// (`specs/input.md` Edit).
     fn comment_claims_edit(&self) -> bool {
-        let card_visible =
-            self.mode == Mode::List || (self.focus == Focus::Diff && !self.preview_active());
-        card_visible && self.target_comment().is_some()
+        let on_the_diff =
+            self.focus == Focus::Diff && !self.preview_active() && self.select_anchor.is_none();
+        (self.mode == Mode::List || on_the_diff) && self.target_comment().is_some()
     }
 
     /// Whether `edit` opens a file here. The branch [`Self::start_edit`] takes, asked by the
@@ -4948,6 +4946,12 @@ mod tests {
         assert!(!app.composing(), "the comment branch must not fire either");
         assert!(app.editor_request.is_none());
         assert!(app.select_anchor.is_some(), "and the range survives the press");
+
+        // The freeze is the diff's. The comments list owns its own screen, so the key still
+        // opens the highlighted comment there.
+        app.open_list();
+        app.start_edit();
+        assert!(app.composing(), "the list edits its comment under a live range");
     }
 
     #[test]

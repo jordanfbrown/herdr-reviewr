@@ -23,6 +23,16 @@ fn prepended_path(inherited: Option<&OsStr>) -> OsString {
     path
 }
 
+fn appended_path(inherited: Option<&OsStr>) -> OsString {
+    let Some(inherited) = inherited.filter(|p| !p.is_empty()) else {
+        return OsString::from(COMMON_BINS.join(":"));
+    };
+    let mut path = inherited.to_os_string();
+    path.push(":");
+    path.push(COMMON_BINS.join(":"));
+    path
+}
+
 fn resolve_on(path: &OsStr, name: &OsStr) -> Option<PathBuf> {
     let as_path = Path::new(name);
     if as_path.is_absolute() || as_path.parent().is_some_and(|p| !p.as_os_str().is_empty()) {
@@ -45,20 +55,17 @@ pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
 }
 
 /// Resolve `program` the way the reviewer's own shell would: their `PATH` first, the common
-/// host bins only as a fallback.
+/// host bins only as a fallback. The child is given that same PATH.
 ///
 /// The opposite order from [`command`], and deliberately. `git` and the forge CLIs are the
 /// host's tools, so a stripped pane PATH must not hide them. The editor is the reviewer's own,
-/// so a version-managed shim on their `PATH` has to win over a stale copy in a common bin
-/// (`specs/input.md` Edit). The child still gets the host PATH, so whatever it launches
-/// resolves like everything else.
+/// so a version-managed shim on their `PATH` has to win over a stale copy in a common bin, and
+/// so must every tool the editor goes on to launch — its language servers, its formatters, its
+/// runtime (`specs/input.md` Edit).
 pub(crate) fn user_command(program: impl AsRef<OsStr>) -> Command {
     let program = program.as_ref();
-    let path = host_path();
-    let resolved = env::var_os("PATH")
-        .and_then(|inherited| resolve_on(&inherited, program))
-        .or_else(|| resolve_on(&path, program));
-    let mut cmd = resolved.map_or_else(|| Command::new(program), Command::new);
+    let path = appended_path(env::var_os("PATH").as_deref());
+    let mut cmd = resolve_on(&path, program).map_or_else(|| Command::new(program), Command::new);
     cmd.env("PATH", path);
     cmd
 }
@@ -73,7 +80,7 @@ pub fn on_path(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{COMMON_BINS, prepended_path, resolve_on};
+    use super::{COMMON_BINS, appended_path, prepended_path, resolve_on};
     use std::env;
     use std::ffi::OsStr;
     use std::path::PathBuf;
@@ -93,6 +100,20 @@ mod tests {
         let parts: Vec<PathBuf> = env::split_paths(&got).collect();
         let expected: Vec<PathBuf> = COMMON_BINS.iter().map(PathBuf::from).collect();
         assert_eq!(parts, expected);
+    }
+
+    #[test]
+    fn appended_path_leaves_the_reviewers_own_entries_in_front() {
+        // The editor's own tools have to resolve the way its shell would resolve them, so a
+        // version-managed shim wins and the common bins only backstop a stripped PATH.
+        let got = appended_path(Some(OsStr::new("/me/.mise/shims:/usr/bin")));
+        let parts: Vec<PathBuf> = env::split_paths(&got).collect();
+        let mut expected = vec![PathBuf::from("/me/.mise/shims"), PathBuf::from("/usr/bin")];
+        expected.extend(COMMON_BINS.iter().map(PathBuf::from));
+        assert_eq!(parts, expected);
+
+        let bare: Vec<PathBuf> = env::split_paths(&appended_path(None)).collect();
+        assert_eq!(bare, COMMON_BINS.iter().map(PathBuf::from).collect::<Vec<_>>());
     }
 
     #[test]

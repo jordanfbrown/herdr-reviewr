@@ -110,8 +110,8 @@ The steps and the skips share the rest:
 
 ### Edit
 
-`edit` acts on what the cursor names: the comment when one is there, the file otherwise. The
-editor takes the pane, and reviewr returns to the same place when it exits.
+`edit` acts on what the cursor names: the comment when one is there, the file otherwise. reviewr
+returns to the same place when the editor exits.
 
 The following table is every state `edit` can be pressed in. A state it does not name is a
 state nobody decided.
@@ -126,7 +126,7 @@ state nobody decided.
 | a file row in the navigator                | that file at line 1                              |
 | a directory row                            | nothing                                          |
 | a file the changeset calls deleted         | nothing                                          |
-| a live line selection                      | nothing                                          |
+| a live line selection on the diff          | nothing                                          |
 | the comments list                          | the highlighted comment, for editing             |
 | the comment editor, find band, or a picker | nothing, the key is theirs                       |
 | the search screen                          | nothing, the key types into the query            |
@@ -138,11 +138,11 @@ The footer offers `e edit file` exactly on the rows that open a file, and never 
 - The editor's own name picks its arguments. Four spellings cover the editors reviewr knows: `+LINE path` for the vi family, nano, micro, kakoune, emacs, BBEdit, and gedit, `path:LINE` for helix, Zed, and Sublime Text, `-g path:LINE` for the VS Code family and its forks, and `--line LINE path` for the JetBrains family, Xcode, Kate, and TextMate. A name reviewr does not know opens the file without a line.
 - A graphical editor returns as soon as it hands the file to a running window, so reviewr adds its wait flag. A command that already carries that flag, in either spelling, gets no second one. A terminal editor holds the pane already and gets none.
 - The path reviewr passes is absolute, so no file name reads as a flag.
-- A terminal editor is handed the pane outright: reviewr releases every mode it holds and claims them all back when the editor exits. A graphical editor never reads the terminal, so it keeps none of it, and the diff stays on screen behind the editor's window under an `editing …` status. The wait flag tells the two apart, since an editor needs one exactly when it hands the file to a window and returns. An editor reviewr does not know, and any command the `editor` key spells out, is handed the pane, which is the guess a terminal editor can survive.
+- A terminal editor is handed the pane outright: reviewr releases every mode it holds and claims them all back when the editor exits. A graphical editor never reads the terminal, so it keeps none of it, and the diff stays on screen behind the editor's window under an `editing …` status. The editor's own name answers which it is, in every path, the `editor` key's command included: an editor needs a wait flag exactly when it hands the file to a window and returns. A name reviewr does not know is handed the pane, which is the guess a terminal editor can survive.
 - Keeping the pane for a graphical editor keeps the terminal in raw mode, so a `ctrl+c` typed there stays a key event rather than a signal that would end the session and every comment in it (`overview.md`).
 - Input a terminal editor left buffered is discarded, since its own teardown queries answer in those bytes. A terminal resize meanwhile is answered rather than discarded.
 - Pointer state is forgotten when the pane is handed over. Mouse reporting stops there, so no release ends a drag and no motion moves the hover off the cell it was painted on (`text-selection.md`, `tui.md`).
-- The editor resolves on the reviewer's own `PATH` first, unlike the host tools reviewr runs for itself, so a version-managed editor wins over a stale copy in a common location. It runs in the reviewed repository, so an editor that reads its project root from the working directory finds the worktree.
+- The editor resolves on the reviewer's own `PATH` first, unlike the host tools reviewr runs for itself, so a version-managed editor wins over a stale copy in a common location. The editor is given that same `PATH`, so its own language servers, formatters, and runtimes resolve the way its shell would resolve them. It runs in the reviewed repository, so an editor that reads its project root from the working directory finds the worktree.
 - Returning restores the open file, the cursor, the scroll, the folds, and the footer's expansion.
 - A finished edit refreshes the changeset and samples the turn, so tracking resumes without waiting for the next poll. A turn that both began and ended while the editor held the loop is missed like any turn shorter than a poll (`herdr-host.md`). The diff reconciles in place (`overview.md` Continuity).
 
