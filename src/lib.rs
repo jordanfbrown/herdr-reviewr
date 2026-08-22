@@ -214,16 +214,6 @@ fn drain_input(app: &mut App) -> Result<()> {
     Ok(())
 }
 
-/// A window editor reviewr has launched and not yet reaped (`specs/input.md` Edit).
-///
-/// reviewr never waits on one and never asks it anything. The list is swept at the next window
-/// editor press, which is what lets a second press on a file already out say so instead of
-/// launching another, and what keeps a run of presses from stacking up exited children.
-struct Launched {
-    child: std::process::Child,
-    path: String,
-}
-
 /// Service one `edit` request that named a file (`specs/input.md` Edit).
 ///
 /// A terminal editor owns the pane outright: it suspends down to a plain terminal, and the
@@ -235,7 +225,7 @@ fn run_editor(
     app: &mut App,
     configured: Option<&str>,
     kbd: bool,
-    open: &mut Vec<Launched>,
+    open: &mut Vec<std::process::Child>,
 ) -> Result<()> {
     let Some(target) = app.editor_request.take() else { return Ok(()) };
     // Absolute, so no editor can read the file name as one of its own flags and no dialect
@@ -243,20 +233,23 @@ fn run_editor(
     // a worktree reached through one opens under the name the reviewer knows.
     let joined = app.repo.join(&target.path);
     let path = std::path::absolute(&joined).unwrap_or(joined);
-    let Some(command) = editor::resolve(
+    let command = match editor::resolve(
         configured,
         std::env::var("VISUAL").ok().as_deref(),
         std::env::var("EDITOR").ok().as_deref(),
         &path,
         target.line,
-    ) else {
-        // Two different causes, and the first would otherwise be told to set what it set.
-        app.status = if configured.is_some() {
-            "the `editor` config key names no program".into()
-        } else {
-            "set `editor` in the plugin config, or $EDITOR".into()
-        };
-        return Ok(());
+    ) {
+        Ok(command) => command,
+        // Two causes, and the second would otherwise be told to set what it set.
+        Err(editor::NoEditor::Unset) => {
+            app.status = "set `editor` in the plugin config, or $EDITOR".into();
+            return Ok(());
+        }
+        Err(editor::NoEditor::NamesNoProgram) => {
+            app.status = "the editor setting names no program".into();
+            return Ok(());
+        }
     };
     // `all_files` lists what the index tracks, so a file removed from the worktree can still
     // be a row, and the changeset only catches it inside a scope that diffs the worktree
@@ -270,25 +263,27 @@ fn run_editor(
     // The reviewer's own PATH first, so a version-managed editor wins over a stale copy in a
     // common bin, with the host locations as the fallback a stripped pane PATH needs
     // (`src/proc.rs`, `specs/herdr-host.md`).
-    let mut cmd = proc::user_command(&command.program);
+    // Asked before the pane changes hands: an editor that is not there would otherwise flip
+    // the screen down to the shell and back for a spawn that never happened, on every press
+    // (`specs/input.md` Edit).
+    let Some(mut cmd) = proc::user_command(&command.program) else {
+        app.status = format!("no editor at {}", command.program);
+        return Ok(());
+    };
     cmd.args(&command.args).current_dir(&app.repo);
 
     if !command.wants_terminal {
         // A window editor never reads the terminal, so reviewr keeps it. The reviewer keeps
         // the diff on screen, and raw mode stays on, which is what keeps a `ctrl+c` in the
         // pane a key event rather than a signal that would take the comment store with it
-        // (`specs/overview.md`). Nothing waits on it either: the poll shows the write.
-        open.retain_mut(|editor| matches!(editor.child.try_wait(), Ok(None)));
-        if open.iter().any(|editor| editor.path == target.path) {
-            app.status = format!("{} is already open", target.path);
-            return Ok(());
-        }
+        // (`specs/overview.md`). Nothing waits on it either: the poll shows the write. The
+        // launchers that have since exited are collected here, so a session leaves none behind.
+        open.retain_mut(|child| matches!(child.try_wait(), Ok(None)));
         cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         app.status = match cmd.spawn() {
             Ok(child) => {
-                let status = format!("opened {}", target.path);
-                open.push(Launched { child, path: target.path });
-                status
+                open.push(child);
+                format!("opened {}", target.path)
             }
             Err(e) => format!("editor failed: {e}"),
         };
@@ -907,7 +902,7 @@ fn event_loop(
         world_res_tx,
     );
     // Window editors reviewr launched, reaped at the next press (`specs/input.md` Edit).
-    let mut open_editors: Vec<Launched> = Vec::new();
+    let mut open_editors: Vec<std::process::Child> = Vec::new();
     let mut world_generation = 0_u64;
     let mut world_inflight: Option<(Instant, bool)> = None;
     // The search worker spawns on the first overlay open, so a session that never

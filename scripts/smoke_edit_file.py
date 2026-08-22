@@ -277,7 +277,9 @@ def main():
         if os.path.exists(gui_log):
             with open(gui_log) as f:
                 gui_argv = [line.rstrip("\n") for line in f]
-        check("a window editor is told to wait", "--wait" in gui_argv, f"argv={gui_argv}")
+        check("a window editor is told no flag reviewr invented",
+              not any(a.startswith("--wait") or a.startswith("--block") for a in gui_argv),
+              f"argv={gui_argv}")
         check("and takes its line as --goto path:line",
               "-g" in gui_argv and bool(gui_argv) and ":" in gui_argv[-1],
               f"argv={gui_argv}")
@@ -288,17 +290,15 @@ def main():
         check("so its own output never reaches the screen",
               b"FAKE-EDITOR-IS-ON-SCREEN" not in gui_after)
         check("the pane says it opened the file", b"opened" in gui_after)
+        # `tab` moves focus to the diff, which rewrites the footer's primary action — a change
+        # only the key can cause, unlike the ambient repaints this session's 1s poll produces.
         check("the pane answers keys while the editor holds the file",
-              len(s.press_bounded("j", 1.0)) > 0)
+              b"comment" in plain(s.press_bounded("\t", 1.5)))
         # Nothing is watching the editor, so the pane rests: no wake of its own, no redraw.
         before = s.cpu_seconds()
         s.drain(quiet=0.3, timeout=2.0)
         burned = s.cpu_seconds() - before
         check("and rests while it waits", burned < 0.2, f"burned {burned:.2f}s of cpu in 2s")
-        # The same file twice is one window, so a held key cannot launch an editor per repeat.
-        again = plain(s.press_bounded("e", 1.5))
-        check("a second press on the same file opens no second editor",
-              b"already open" in again)
         # Nothing waits for the editor to close: the poll shows the write while the file is
         # still out, with no keypress from the reviewer.
         opened_at = time.perf_counter()
@@ -306,13 +306,19 @@ def main():
             s.drain(quiet=0.3, timeout=1.0)
         check("the poll shows the write with the file still out",
               EDITED_LINE in plain(s.seen[gui_mark:]))
-        # And the file is openable again once the editor is gone, or `e` refuses it for the
-        # rest of the session.
-        while time.perf_counter() - opened_at < 14:
-            s.drain(quiet=0.3, timeout=1.0)
-        reopened = plain(s.press_bounded("e", 2.0))
-        check("a file put down can be opened again",
-              b"opened" in reopened and b"already open" not in reopened)
+        # A file still out opens again rather than being refused: the reviewer has moved on to
+        # another line and wants the editor to follow.
+        with open(gui_log, "w") as f:
+            f.write("")
+        # The status does not change between two `opened` presses, so the argv log is the
+        # observable: a refused press would leave it empty.
+        s.press_bounded("e", 2.0)
+        with open(gui_log) as f:
+            again = [line.rstrip("\n") for line in f]
+        check("a file already out opens again rather than being refused",
+              bool(again) and again[-1].endswith(":1"), f"argv={again}")
+        s.press("q")
+        s.close()
 
         # The `editor` config key is the documented override, and nothing else proves it
         # reaches the spawn: the two sources below are both live, and only one may win.
@@ -360,18 +366,14 @@ def main():
         s.press("q")
         s.close()
 
-        # A window editor that never launches has to say so: reviewr is not watching it, and
-        # its own output goes nowhere.
-        broken = os.path.join(bindir, "code")
-        with open(broken, "w") as f:
-            f.write("#!/bin/sh\nexit 3\n")
-        os.chmod(broken, 0o755)
-        s = Session(binary, root, os.path.join(bindir, "missing-code"))
+        # An editor that is not there says so before anything moves. The name has to resolve to
+        # a window dialect, or this drives the terminal branch and proves nothing about it.
+        s = Session(binary, root, os.path.join(home, "no-such-dir", "code"))
         s.drain()
         mark = len(s.seen)
         s.press("e")
-        check("a window editor that cannot be launched says so", b"editor failed" in
-              plain(s.seen[mark:]))
+        check("a window editor that is not there says so", b"no editor at" in plain(s.seen[mark:]))
+        check("and the pane is never handed over for it", ALT_LEAVE not in s.seen[mark:])
         s.press("q")
         s.close()
 
@@ -400,7 +402,7 @@ def main():
         # next keypress. The loop draws only after an event arrives, so the run has to repaint.
         for label, ed, needle in [
             ("no editor set", None, b"set `editor`"),
-            ("a missing editor binary", "/nonexistent/nope", b"editor failed"),
+            ("a missing editor binary", "/nonexistent/nope", b"no editor at"),
             ("an editor that exits nonzero", "/usr/bin/false", b"editor exited"),
         ]:
             s = Session(binary, root, ed)

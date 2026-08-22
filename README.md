@@ -289,19 +289,16 @@ opens its own window, so reviewr stays put and you keep the diff on screen — s
 change shows up in the diff on its own.
 
 Set `$EDITOR` (or `$VISUAL`) and it just works. reviewr knows how each editor wants its line
-number:
+number, and adds nothing else:
 
 | editor | how it's called |
 | --- | --- |
-| vim, nvim, nano, micro, kakoune, emacs | `+41 path` |
-| BBEdit, gedit, Linux Mint's xed | `--wait +41 path` |
-| MacVim, gVim | `-f +41 path` |
-| helix, Zed (`zed`/`zeditor`/`zedit`), Sublime Text | `path:41` (Zed and Sublime also get `--wait`) |
-| VS Code, Cursor, Windsurf, VSCodium | `--wait -g path:41` |
-| JetBrains IDEs, Xcode (`xed`), TextMate | `--wait --line 41 path` |
-| Kate | `--block --line 41 path` |
+| vim, nvim, MacVim, gVim, nano, micro, kakoune, emacs, BBEdit, gedit, Mint's xed | `+41 path` |
+| helix, Zed (`zed`/`zeditor`/`zedit`), Sublime Text | `path:41` |
+| VS Code and its forks (Cursor, Windsurf, VSCodium, Insiders, Positron) | `-g path:41` |
+| JetBrains IDEs, Xcode (`xed`), TextMate, Kate | `--line 41 path` |
 
-If you already set a wait flag yourself, reviewr won't add a second one.
+Whatever flags you put in `$EDITOR` yourself are kept.
 
 For anything else, spell the command out yourself:
 

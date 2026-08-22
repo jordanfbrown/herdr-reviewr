@@ -439,6 +439,16 @@ fn parse_plugin_config(path: &Path) -> Result<PluginConfig, PluginConfigError> {
             .as_str()
             .filter(|c| !c.trim().is_empty())
             .ok_or_else(|| value_error(path, "editor", "a non-empty command"))?;
+        // `{file}` and `{line}` are the whole grammar, so a typo for one of them would
+        // otherwise reach the editor as a literal word and open a file named after the typo
+        // (`specs/config.md`).
+        if let Some(unknown) = unknown_placeholder(command) {
+            return Err(value_error(
+                path,
+                "editor",
+                &format!("`{{file}}` and `{{line}}` as the only placeholders, not `{unknown}`"),
+            ));
+        }
         config.editor = Some(command.to_owned());
     }
     // A hostname is recognized by at most one forge; a cross-key collision is an invalid
@@ -579,6 +589,21 @@ fn unknown_key_error(path: &Path, key: &str, options: &str) -> PluginConfigError
 /// Parse one self-hosted forge key: a bare hostname naming no built-in forge host — a
 /// hostname is recognized by at most one forge (`specs/config.md`). The built-in set has
 /// one authority, `git::forge_for_host`, asked here with no self-hosted keys.
+/// The first `{...}` token in `command` that is neither `{file}` nor `{line}`.
+fn unknown_placeholder(command: &str) -> Option<String> {
+    let mut rest = command;
+    while let Some(at) = rest.find('{') {
+        rest = &rest[at..];
+        let Some(end) = rest.find('}') else { return Some(rest.to_owned()) };
+        let token = &rest[..=end];
+        if token != "{file}" && token != "{line}" {
+            return Some(token.to_owned());
+        }
+        rest = &rest[end + 1..];
+    }
+    None
+}
+
 fn parse_forge_host(
     path: &Path,
     key: &str,
@@ -778,6 +803,8 @@ mod tests {
             ("editor = \"\"\n", "`editor`"),
             ("editor = \"   \"\n", "`editor`"),
             ("editor = 42\n", "`editor`"),
+            ("editor = \"code {filename}\"\n", "`editor`"),
+            ("editor = \"code {FILE}:{line}\"\n", "`editor`"),
             ("github_host = \"github.com\"\n", "`github_host`"),
             ("github_host = \"gitlab.com\"\n", "`github_host`"),
             ("gitlab_host = \"gitlab.com\"\n", "`gitlab_host`"),

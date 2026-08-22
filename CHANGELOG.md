@@ -12,8 +12,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `e` still edits the comment. A terminal editor takes over the pane and reviewr refreshes when you
   quit it. A window editor opens beside you, so the diff stays on screen and your change shows up
   once you save. Set `$EDITOR` and it works: reviewr knows how vim, helix, VS Code, Cursor, Zed,
-  Sublime, the JetBrains IDEs, and others want their line number. The new `editor` config key takes
-  a `{file}`/`{line}` template for anything else. Shaped by @trsxxii (#33) and @jorgerojas26 (#79).
+  Sublime, the JetBrains IDEs, and others want their line number, and adds nothing else. The new
+  `editor` config key takes a `{file}`/`{line}` template for anything else — write `--wait` in it
+  and reviewr knows to leave the pane alone even for an editor it can't place.
+  Shaped by @trsxxii (#33) and @jorgerojas26 (#79).
 
 ## [0.34.1] — 2026-08-22
 

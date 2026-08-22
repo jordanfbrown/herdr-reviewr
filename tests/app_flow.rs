@@ -884,6 +884,21 @@ fn edit_opens_the_file_under_the_cursor_and_the_comment_when_one_is_there() {
     let from_row = app.editor_request.take().expect("a file row names its file");
     assert_eq!(from_row.path, "a.rs");
     assert_eq!(from_row.line, 1, "a navigator row names no line, so the file opens at its start");
+
+    // The `All files` read pane is built by a different builder and its comments anchor to
+    // content rather than to the diff, so both branches take a different route there.
+    enter_tab(&mut app, herdr_reviewr::app::Tab::AllFiles);
+    app.focus = Focus::Diff;
+    app.diff_cursor = 2;
+    press(&mut app, &keymap, KeyCode::Char('e'));
+    let in_file_view = app.editor_request.take().expect("the File view names its file too");
+    assert_eq!(in_file_view.path, "a.rs");
+    assert_eq!(in_file_view.line, 3, "at the line the cursor is on, not the file's start");
+
+    comment_on(&mut app, ' ', "content note");
+    press(&mut app, &keymap, KeyCode::Char('e'));
+    assert!(app.composing(), "and a content comment claims the key the same way");
+    assert!(app.editor_request.is_none());
 }
 
 #[test]

@@ -675,8 +675,8 @@ pub struct App {
     pub search_dirty: bool,
     /// A picked path awaiting its frecency record; the event loop hands it to the worker.
     pub search_track: Option<String>,
-    /// An `edit` press that named a file; the event loop suspends the pane, runs the editor,
-    /// and resumes (`specs/input.md` Edit). `None` when idle.
+    /// An `edit` press that named a file. The event loop runs the editor, suspending the pane
+    /// first only for one that draws there (`specs/input.md` Edit). `None` when idle.
     pub editor_request: Option<EditTarget>,
     /// The in-file find band's state while `mode == Mode::Find`, `None` otherwise
     /// (specs/find-in-file.md).
@@ -4781,12 +4781,27 @@ mod tests {
             ignored: false,
             is_dir: false,
         });
-        app.file_rows = vec![ListRow {
-            depth: 1,
-            name: "lib.rs".into(),
-            kind: RowKind::File { index: 0, annotation: None },
+        app.entries.push(crate::file_list::Entry {
+            path: "src/other.rs".into(),
+            previous_path: None,
+            annotation: None,
             ignored: false,
-        }];
+            is_dir: false,
+        });
+        app.file_rows = vec![
+            ListRow {
+                depth: 1,
+                name: "lib.rs".into(),
+                kind: RowKind::File { index: 0, annotation: None },
+                ignored: false,
+            },
+            ListRow {
+                depth: 1,
+                name: "other.rs".into(),
+                kind: RowKind::File { index: 1, annotation: None },
+                ignored: false,
+            },
+        ];
         app.diff_path = Some("src/lib.rs".into());
         app.focus = crate::Focus::Diff;
         let bare = Vec::<Span>::new;
@@ -4853,6 +4868,19 @@ mod tests {
                 target("src/lib.rs", 1),
             ),
             (
+                "navigator, on a row that is not the open file",
+                Box::new(|a: &mut App| {
+                    a.focus = crate::Focus::Files;
+                    a.file_cursor = 1;
+                }),
+                target("src/other.rs", 1),
+            ),
+            (
+                "read pane, with the navigator cursor on another file",
+                Box::new(|a: &mut App| a.file_cursor = 1),
+                target("src/lib.rs", 10),
+            ),
+            (
                 "navigator, on a directory row",
                 Box::new(|a: &mut App| {
                     a.focus = crate::Focus::Files;
@@ -4888,10 +4916,18 @@ mod tests {
             // The footer offers the key exactly where the press acts, and names it once. A
             // count, not a presence check: two branches each pushing it reads as `e edit file
             // · z hide · e edit file` on one row.
-            let offered =
-                app.footer_bands().iter().filter(|&&(a, _)| a == FooterAction::EditFile).count();
+            let bands = app.footer_bands();
+            let offered = bands.iter().filter(|&&(a, _)| a == FooterAction::EditFile).count();
             let expected_offers = usize::from(expected.is_some() && !app.comment_claims_edit());
             assert_eq!(offered, expected_offers, "the footer disagrees with the press: {name}");
+            // Ahead of the navigator's own keys, since a narrow row trims from the end and the
+            // file is worth more there than the hide key (`specs/input.md`).
+            let at = |want| bands.iter().position(|&(a, _)| a == want);
+            if let (Some(edit), Some(hide)) =
+                (at(FooterAction::EditFile), at(FooterAction::NavigatorHide))
+            {
+                assert!(edit < hide, "the hide key trims before the file: {name}");
+            }
         }
     }
 
