@@ -23,6 +23,9 @@ returns them to the same place.
 - [ ] `e` in a markdown preview opens the previewed file at line 1.
 - [ ] `e` on a deletion or a fold opens at the nearest numbered row above.
 - [ ] `editor = "code -g {file}:{line}"` substitutes both placeholders. A value naming neither gets the path appended.
+- [ ] With no `editor` key, `$EDITOR` alone opens at the line for the vi family, nano, micro, kakoune, emacs, helix, the VS Code family and its forks, Zed, Sublime Text, the JetBrains family, Xcode, Kate, TextMate, BBEdit, and gedit.
+- [ ] A graphical editor is given its wait flag, and a reviewer who already set one does not get it twice.
+- [ ] An editor reviewr does not know opens the file without a line rather than a guessed flag.
 - [ ] With no `editor` key and no `$VISUAL` or `$EDITOR`, `e` names what to set and opens nothing.
 - [ ] Returning restores the open file, the cursor, the scroll, the folds, and the footer's expansion.
 - [ ] The footer reads `e edit file` on exactly the rows where it works.
@@ -93,3 +96,5 @@ true without misstating who wrote the code.
 - If the terminal fails to restore cleanly under a herdr pane, then narrow step 2 to the exact mode subset herdr needs and log which one broke.
 - If `{line}` substitution proves wrong for a real editor the user runs, then reopen the spelling fork in brainstorming rather than special-casing that editor.
 - 2026-08-22: initial plan.
+- 2026-08-22: the user required every major 2026 editor to work, terminal and IDE alike -> the `$EDITOR` fallback grew from one `+{line}` form to a name-keyed table of four argument dialects plus the wait flag graphical editors need -> `src/editor.rs`, `specs/input.md` Edit, `specs/config.md` Key semantics. The `editor` template key stays as the escape hatch, which is what makes a stale table fixable by the reviewer.
+- 2026-08-22: the PTY smoke test found `e` opening the scripted editor itself, because the harness wrote it inside the repository under review -> the script moved outside the worktree -> `scripts/smoke_edit_file.py`. No product change.

@@ -830,6 +830,37 @@ fn a_rebound_edit_key_carries_the_file_editor_with_it() {
     assert!(app.editor_request.is_some(), "one action moves both meanings together");
 }
 
+/// The whole point of the key: the edit you just made is on screen when you come back.
+#[test]
+fn the_diff_shows_an_edit_made_in_the_editor_after_the_refresh() {
+    let r = edited_repo();
+    let mut app = app_on(&r);
+    app.focus = Focus::Diff;
+    let keymap = Keymap::default();
+
+    press(&mut app, &keymap, KeyCode::Char('e'));
+    let target = app.editor_request.take().expect("`e` names the open file");
+
+    // Stand in for the editor: write the file the way it was handed to one.
+    let body = std::fs::read_to_string(&target.path).unwrap();
+    std::fs::write(&target.path, format!("{body}sixth-line-from-the-editor\n")).unwrap();
+
+    let text = |a: &App| {
+        a.visible
+            .iter()
+            .flat_map(|row| row.spans().iter().map(|s| s.text.clone()))
+            .collect::<String>()
+    };
+    assert!(!text(&app).contains("sixth-line-from-the-editor"), "not on screen before the refresh");
+
+    // The refresh `run_editor` requests on a successful edit.
+    app.reload().unwrap();
+    assert!(
+        text(&app).contains("sixth-line-from-the-editor"),
+        "the open diff rebuilds its content, not only the file list"
+    );
+}
+
 #[test]
 fn esc_clears_a_live_selection() {
     let mut app = composing_app();
