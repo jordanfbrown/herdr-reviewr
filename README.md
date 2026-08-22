@@ -282,19 +282,20 @@ header reads `no base`, with the footer offering `B pick base`.
 
 `e` opens what the cursor names in your editor: the file you're reading at the line you're on,
 or the selected file in the navigator. On a line you've already commented, `e` still edits the
-comment. Either way reviewr refreshes when you come back.
+comment.
 
-A terminal editor takes over the pane. A graphical one opens its own window, so reviewr stays
-put and you keep the diff on screen while you edit.
+A terminal editor takes over the pane, and reviewr refreshes when you quit it. A window editor
+opens its own window, so reviewr stays put and you keep the diff on screen — save, and your
+change shows up in the diff on its own.
 
 Set `$EDITOR` (or `$VISUAL`) and it just works. reviewr knows how each editor wants its line
-number, and adds the wait flag graphical editors need so they don't return before you've typed:
+number:
 
 | editor | how it's called |
 | --- | --- |
 | vim, nvim, nano, micro, kakoune, emacs | `+41 path` |
 | MacVim, gVim | `-f +41 path` |
-| helix, Zed, Sublime Text | `path:41` (Zed and Sublime also get `--wait`) |
+| helix, Zed (`zed`/`zeditor`), Sublime Text | `path:41` (Zed and Sublime also get `--wait`) |
 | VS Code, Cursor, Windsurf, VSCodium | `--wait -g path:41` |
 | JetBrains IDEs, Xcode, TextMate | `--wait --line 41 path` |
 | Kate | `--block --line 41 path` |
@@ -311,8 +312,7 @@ Quote a path that contains a space — `"/Applications/Sublime Text.app/.../subl
 key or in `$EDITOR`. No shell runs the command, so quoting is the only escape.
 
 `{file}` and `{line}` are substituted wherever they appear. This value is the whole command, so
-reviewr adds nothing to it — including the wait flag, which a graphical editor needs or it hands
-the file to its window and returns before you've typed. With no `editor` key and no `$EDITOR`, `e` tells you what to set
+reviewr adds nothing to it. With no `editor` key and no `$EDITOR`, `e` tells you what to set
 rather than opening something you didn't choose.
 
 ### Keybindings

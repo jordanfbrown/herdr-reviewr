@@ -25,7 +25,7 @@ enum LineArg {
 /// One editor family: the binary names that select it, how it takes a line, and the flag that
 /// makes it block until the file closes.
 ///
-/// A graphical editor returns the moment it hands the file to a running instance, so without
+/// A window editor returns the moment it hands the file to a running instance, so without
 /// its wait flag reviewr would repaint before the reviewer typed anything. A terminal editor
 /// owns the pane until it exits and needs none.
 struct Dialect {
@@ -70,7 +70,9 @@ const DIALECTS: &[Dialect] = &[
         wait: WAIT,
     },
     Dialect { names: &["subl", "sublime_text"], line: LineArg::Suffix, wait: WAIT },
-    Dialect { names: &["zed"], line: LineArg::Suffix, wait: WAIT },
+    // Plain `zed` collides with the OpenZFS event daemon, so Linux packages ship the CLI
+    // under a name of their own.
+    Dialect { names: &["zed", "zeditor", "zedit"], line: LineArg::Suffix, wait: WAIT },
     Dialect { names: &["bbedit", "gedit"], line: LineArg::Plus, wait: WAIT },
     Dialect { names: &["mate"], line: LineArg::Flag, wait: WAIT },
     // `xed` names two editors. On macOS it is Xcode's opener, which takes `--line`. On Linux it
@@ -103,7 +105,7 @@ const DIALECTS: &[Dialect] = &[
 /// A resolved editor invocation: the program to run, its full argument list, and whether it
 /// wants the terminal.
 ///
-/// A terminal editor paints in the pane and must be handed it outright. A graphical one opens
+/// A terminal editor paints in the pane and must be handed it outright. A window one opens
 /// a window and never reads the terminal at all, so reviewr keeps it (`specs/input.md` Edit).
 /// The wait flag is what tells them apart: an editor needs one exactly when it hands the file
 /// to a window and returns.
@@ -298,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn graphical_editors_wait_so_the_pane_does_not_repaint_first() {
+    fn window_editors_are_told_to_wait() {
         // The VS Code family, its forks included, takes `--goto path:line`.
         for name in ["code", "code-insiders", "codium", "cursor", "windsurf"] {
             assert_eq!(
@@ -345,7 +347,7 @@ mod tests {
         for name in ["vim", "nvim", "nano", "micro", "kak", "emacs", "hx", "helix"] {
             assert!(env(name).unwrap().wants_terminal, "{name} paints in the pane");
         }
-        for name in ["code", "cursor", "zed", "subl", "idea", "kate", "mate", "mvim"] {
+        for name in ["code", "cursor", "zed", "zeditor", "subl", "idea", "kate", "mate", "mvim"] {
             assert!(!env(name).unwrap().wants_terminal, "{name} opens a window");
         }
         // A configured command spells its own arguments, but it is still one of these

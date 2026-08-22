@@ -823,29 +823,38 @@ fn the_footer_offers_edit_file_on_a_diff_with_no_rows() {
 /// The footer never names a key that would not work, and a deleted file is the case that
 /// separates "the cursor names a file" from "the worktree still holds it".
 #[test]
-fn the_footer_hides_edit_file_on_a_deleted_file() {
+fn edit_reaches_a_file_the_changeset_only_calls_deleted() {
+    // `git rm --cached` reports the file as deleted while it sits in the worktree. Whether a
+    // file is there is the disk's answer, and the press is where that question is asked, so
+    // the key has to reach it (`specs/input.md` Edit).
     let r = Repo::init();
-    r.write("gone.rs", "one\ntwo\n");
+    r.write("here.rs", "one\ntwo\n");
     r.commit_all("init");
-    std::fs::remove_file(r.path().join("gone.rs")).unwrap();
+    r.git(&["rm", "--cached", "-q", "here.rs"]);
     let mut app = app_on(&r);
     app.focus = Focus::Diff;
 
-    assert_eq!(app.diff_path.as_deref(), Some("gone.rs"), "the changeset still names it");
-    assert!(!app.visible.is_empty(), "and its diff is a run of deletions");
+    assert_eq!(app.diff_path.as_deref(), Some("here.rs"), "the changeset names it");
     assert!(
-        !app.footer_bands().iter().any(|&(x, _)| x == FooterAction::EditFile),
-        "but the changeset calls it deleted, so the footer stays quiet"
+        app.entries.iter().any(|e| {
+            e.path == "here.rs"
+                && e.annotation.as_ref().map(|a| a.change)
+                    == Some(herdr_reviewr::model::ChangeKind::Deleted)
+        }),
+        "and calls it deleted"
     );
+    assert!(r.path().join("here.rs").is_file(), "but the file is right there");
 
+    assert!(
+        app.footer_bands().iter().any(|&(x, _)| x == FooterAction::EditFile),
+        "so the footer offers the key"
+    );
     let keymap = Keymap::default();
     press(&mut app, &keymap, KeyCode::Char('e'));
-    assert!(app.editor_request.is_none(), "and the press opens nothing");
-
-    app.focus = Focus::Files;
-    assert!(
-        !app.footer_bands().iter().any(|&(x, _)| x == FooterAction::EditFile),
-        "the navigator row is quiet for the same reason"
+    assert_eq!(
+        app.editor_request.as_ref().map(|t| t.path.as_str()),
+        Some("here.rs"),
+        "and the press names it"
     );
 }
 

@@ -110,8 +110,9 @@ The steps and the skips share the rest:
 
 ### Edit
 
-`edit` acts on what the cursor names: the comment when one is there, the file otherwise. reviewr
-returns to the same place when the editor exits.
+`edit` acts on what the cursor names: the comment when one is there, the file otherwise. A
+terminal editor takes the pane and gives it back on the same place. A window editor takes
+nothing.
 
 The following table is every state `edit` can be pressed in. A state it does not name is a
 state nobody decided.
@@ -125,29 +126,29 @@ state nobody decided.
 | a diff with no rows                        | the open file at line 1                          |
 | a file row in the navigator                | that file at line 1                              |
 | a directory row                            | nothing                                          |
-| a file the changeset calls deleted         | nothing                                          |
 | a live line selection on the diff          | nothing                                          |
 | the comments list                          | the highlighted comment, for editing             |
 | the comment editor, find band, or a picker | nothing, the key is theirs                       |
 | the search screen                          | nothing, the key types into the query            |
 | the `PR` tab                               | nothing, it names no file                        |
 
-The footer offers `e edit file` exactly on the rows that open a file, and never elsewhere. It reads the changeset, so a row it offers can still turn out to name a file the worktree no longer holds, and the press says so.
+The footer offers `e edit file` exactly on the rows that open a file, and never elsewhere. Whether the file is still on disk is the press's question, not the footer's.
 
 - The editor command is the `editor` config key (`config.md`). With neither that key nor `$VISUAL` nor `$EDITOR` set, the press names what to set and opens nothing. reviewr never guesses an editor.
 - The editor's own name picks its arguments. Four spellings cover the editors reviewr knows: `+LINE path` for the vi family, nano, micro, kakoune, emacs, BBEdit, and gedit, `path:LINE` for helix, Zed, and Sublime Text, `-g path:LINE` for the VS Code family and its forks, and `--line LINE path` for the JetBrains family, Xcode, Kate, and TextMate. A name reviewr does not know opens the file without a line.
-- A graphical editor returns as soon as it hands the file to a running window, so reviewr adds its wait flag. The flag is what makes the process live as long as the file is open, which is how reviewr knows the edit finished. A command that already carries it, in either spelling, gets no second one. A terminal editor holds the pane already and gets none.
+- The name also answers which kind the editor is, in every path, the `editor` key's command included: an editor needs a wait flag exactly when it hands the file to a window and returns. A name reviewr does not know is handed the pane, which is the guess a terminal editor can survive.
+- A window editor returns as soon as it hands the file to a running window, so reviewr adds its wait flag. The flag keeps the process alive as long as the file is open, which is how reviewr knows the file is still out. A command that already carries it, in either spelling, gets no second one. A terminal editor holds the pane already and gets none.
 - The path reviewr passes is absolute, so no file name reads as a flag.
-- A press whose file is gone from the worktree says so and opens nothing. Only a scope that diffs the worktree calls a removal a deletion, and `All files` lists what the index tracks, so the press asks the disk rather than the changeset (`review-model.md`).
-- A terminal editor takes the pane back in cooked mode, so a `ctrl+c` pressed before the editor installs its own raw mode is a signal rather than a key, and it ends the session with the comments in it (`overview.md`). That gap is the editor's own startup, and reviewr adds nothing to it.
-- A graphical editor that fails after it was launched reports on the pane. Its own output goes nowhere, so this is the only place the reviewer can learn it never opened the file. A failure outranks a success when several editors close together, and closing several files at once reports the count.
-- A terminal editor is handed the pane outright: reviewr releases every mode it holds and claims them all back when the editor exits. A graphical editor never reads the terminal, so it keeps none of it, and the diff stays on screen behind the editor's window under an `editing …` status. An open editor is a state, not a notification, so that status outlives anything said over the top of it and clears only when the file comes back. reviewr does not wait on it either: the pane answers keys, repaints, and polls for the whole time the file is open, and closing the file refreshes the changeset and reports the edit. Several files may be open in editors at once. The editor's own name answers which it is, in every path, the `editor` key's command included: an editor needs a wait flag exactly when it hands the file to a window and returns. A name reviewr does not know is handed the pane, which is the guess a terminal editor can survive.
-- Keeping the pane for a graphical editor keeps the terminal in raw mode, so a `ctrl+c` typed there stays a key event rather than a signal that would end the session and every comment in it (`overview.md`).
+- A press whose file is gone from the worktree says so and opens nothing. The press asks the disk, never the changeset: `git rm --cached` calls a file deleted while it sits in the worktree, and a scope that does not diff the worktree calls a removed file present (`review-model.md`).
+- A terminal editor is handed the pane outright: reviewr releases every mode it holds and claims them all back when the editor exits.
+- A window editor never reads the terminal, so it keeps none of it. The press reports `opened <path>` and nothing else moves. reviewr does not wait on it, watch it, or ask it anything. The reviewer keeps the diff on screen for the whole edit, and the write shows on the next poll like any other change to the worktree (`tui.md`). Pressing the key again on a file already out says so rather than opening a second editor.
+- Keeping the pane keeps the terminal in raw mode, so a `ctrl+c` typed there stays a key event rather than a signal that would end the session and every comment in it (`overview.md`). A terminal editor takes the pane back in cooked mode, so a `ctrl+c` pressed before that editor installs its own raw mode is a signal. That gap is the editor's own startup, and reviewr adds nothing to it.
+- A window editor that fails to launch reports on the pane. A failure after that is the editor's own to report, in its own window.
 - Input a terminal editor left buffered is discarded, since its own teardown queries answer in those bytes. A terminal resize meanwhile is answered rather than discarded.
 - Pointer state is forgotten when the pane is handed over. Mouse reporting stops there, so no release ends a drag and no motion moves the hover off the cell it was painted on (`text-selection.md`, `tui.md`).
 - The editor resolves on the reviewer's own `PATH` first, unlike the host tools reviewr runs for itself, so a version-managed editor wins over a stale copy in a common location. The editor is given that same `PATH`, so its own language servers, formatters, and runtimes resolve the way its shell would resolve them. It runs in the reviewed repository, so an editor that reads its project root from the working directory finds the worktree.
-- Returning restores the open file, the cursor, the scroll, the folds, and the footer's expansion.
-- A finished edit refreshes the changeset, so the write shows without waiting for the next poll. The turn samples on that poll, the way every other worktree write is sampled. A turn that both began and ended while a terminal editor held the loop is missed like any turn shorter than a poll (`herdr-host.md`). The diff reconciles in place (`overview.md` Continuity).
+- Returning from a terminal editor restores the open file, the cursor, the scroll, the folds, and the footer's expansion.
+- A terminal editor's exit refreshes the changeset, so the write shows without waiting for the next poll. The turn samples on that poll, the way every other worktree write is sampled. A turn that both began and ended while a terminal editor held the loop is missed like any turn shorter than a poll (`herdr-host.md`). The diff reconciles in place (`overview.md` Continuity).
 
 The editor writes, never reviewr (`overview.md`). An edit made while an agent's turn is open joins that turn's diff, so `last-turn` shows the reviewer's own change beside the agent's (`herdr-host.md`).
 

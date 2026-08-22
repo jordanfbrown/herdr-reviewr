@@ -3022,15 +3022,11 @@ impl App {
             // was opened by path rather than by row. A preview paints no numbered rows.
             (self.diff_path.clone()?, !self.preview_active())
         };
-        // A file the changeset says is gone opens nothing. The changeset is the source of
-        // truth here, never a `stat`: this runs on the render path, and one poll of staleness
-        // is stale, never wrong (`overview.md` Continuity). Asked before the line is looked
-        // for, since that search is the only unbounded work here.
-        if self.changed_annotation(&path).map(|a| a.change)
-            == Some(crate::model::ChangeKind::Deleted)
-        {
-            return None;
-        }
+        // Whether the file is there is the disk's answer, and the press asks it. The
+        // changeset cannot stand in: `git rm --cached` calls a file deleted while it sits in
+        // the worktree, and a scope that does not diff the worktree calls a removed file
+        // present. A `stat` per frame is not worth either (`specs/input.md` Edit).
+        //
         // The nearest row at or above the cursor carrying a worktree line number. A deletion
         // and a fold carry none, and a notice diff paints no rows at all, so each falls back
         // to the file's start.
@@ -4861,20 +4857,6 @@ mod tests {
                 Box::new(|a: &mut App| {
                     a.focus = crate::Focus::Files;
                     a.file_rows[0].kind = RowKind::Dir { path: "src".into(), expanded: true };
-                }),
-                None,
-            ),
-            (
-                "a file the changeset says is deleted",
-                Box::new(|a: &mut App| {
-                    a.changed.insert(
-                        "src/lib.rs".into(),
-                        crate::file_list::Annotation {
-                            change: crate::model::ChangeKind::Deleted,
-                            additions: 0,
-                            deletions: 2,
-                        },
-                    );
                 }),
                 None,
             ),

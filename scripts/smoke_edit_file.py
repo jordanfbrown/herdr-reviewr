@@ -244,56 +244,62 @@ def main():
         if os.path.exists(gui_log):
             with open(gui_log) as f:
                 gui_argv = [line.rstrip("\n") for line in f]
-        check("a graphical editor is told to wait", "--wait" in gui_argv, f"argv={gui_argv}")
-        # It never reads the terminal, so reviewr keeps it: the reviewer keeps the diff on
-        # screen, and raw mode stays on so a `ctrl+c` in the pane cannot signal the process.
-        gui_after = s.seen[gui_mark:]
-        check("and the pane is never handed to it", ALT_LEAVE not in gui_after)
-        check("so its own output never reaches the screen",
-              b"FAKE-EDITOR-IS-ON-SCREEN" not in plain(gui_after))
-        check("the pane says it is editing", b"editing" in plain(gui_after))
+        check("a window editor is told to wait", "--wait" in gui_argv, f"argv={gui_argv}")
         check("and takes its line as --goto path:line",
               "-g" in gui_argv and bool(gui_argv) and ":" in gui_argv[-1],
               f"argv={gui_argv}")
-        # The whole point of keeping the pane: it has to still work. The editor is holding
-        # the file right now, so a keypress that repaints proves the loop was never blocked.
+        # It never reads the terminal, so reviewr keeps it: the reviewer keeps the diff on
+        # screen, and raw mode stays on so a `ctrl+c` in the pane cannot signal the process.
+        gui_after = plain(s.seen[gui_mark:])
+        check("and the pane is never handed to it", ALT_LEAVE not in s.seen[gui_mark:])
+        check("so its own output never reaches the screen",
+              b"FAKE-EDITOR-IS-ON-SCREEN" not in gui_after)
+        check("the pane says it opened the file", b"opened" in gui_after)
         check("the pane answers keys while the editor holds the file",
               len(s.press_bounded("j", 1.0)) > 0)
-        # Waiting has to be cheap. A wake the loop can never satisfy turns the wait into a
-        # spin, which is invisible to every functional check but costs a whole core for as
-        # long as the reviewer keeps the file open.
+        # Nothing is watching the editor, so the pane rests: no wake of its own, no redraw.
         before = s.cpu_seconds()
         s.drain(quiet=0.3, timeout=3.0)
         burned = s.cpu_seconds() - before
         check("and rests while it waits", burned < 0.2, f"burned {burned:.2f}s of cpu in 3s")
-        # Putting the file down refreshes with no keypress from the reviewer. The editor's
-        # write is the proof: it cannot be on screen until the diff is rebuilt.
-        check("the write is not on screen while the file is out",
-              EDITED_LINE not in plain(s.seen[gui_mark:]))
-        deadline = time.perf_counter() + 15
-        while EDITED_LINE not in plain(s.seen[gui_mark:]) and time.perf_counter() < deadline:
-            s.drain(quiet=0.3, timeout=1.0)
-        check("closing the file refreshes the diff on its own",
-              EDITED_LINE in plain(s.seen[gui_mark:]))
-        s.press("q")
-        s.close()
+        # The same file twice is one window, so a held key cannot launch an editor per repeat.
+        again = plain(s.press_bounded("e", 1.5))
+        check("a second press on the same file opens no second editor",
+              b"already open" in again)
 
-        # A graphical editor writes to no terminal, so the pane is the only place its failure
-        # can land — and it must not be reported as a finished edit.
+        # A window editor that never launches has to say so: reviewr is not watching it, and
+        # its own output goes nowhere.
         broken = os.path.join(bindir, "code")
         with open(broken, "w") as f:
             f.write("#!/bin/sh\nexit 3\n")
         os.chmod(broken, 0o755)
-        s = Session(binary, root, broken)
+        s = Session(binary, root, os.path.join(bindir, "missing-code"))
         s.drain()
         mark = len(s.seen)
         s.press("e")
-        deadline = time.perf_counter() + 10
-        while b"exit status" not in plain(s.seen[mark:]) and time.perf_counter() < deadline:
-            s.drain(quiet=0.3, timeout=2.0)
-        after = plain(s.seen[mark:])
-        check("a graphical editor that fails says so on the pane", b"exit status" in after)
-        check("and is never reported as an edit", b"edited" not in after)
+        check("a window editor that cannot be launched says so", b"editor failed" in
+              plain(s.seen[mark:]))
+        s.press("q")
+        s.close()
+
+        # A file the changeset still names but the worktree no longer holds opens nothing.
+        gone_root = os.path.join(home, "gone-repo")
+        os.makedirs(gone_root)
+        gone = os.path.join(gone_root, "a.rs")
+        sh(gone_root, "git", "init", "-q")
+        sh(gone_root, "git", "config", "user.email", "smoke@example.com")
+        sh(gone_root, "git", "config", "user.name", "Smoke")
+        with open(gone, "w") as f:
+            f.write("one\ntwo\n")
+        sh(gone_root, "git", "add", "-A")
+        sh(gone_root, "git", "commit", "-qm", "init")
+        os.remove(gone)
+        s = Session(binary, gone_root, editor)
+        s.drain()
+        mark = len(s.seen)
+        s.press("e")
+        check("a file the worktree no longer holds says it is gone",
+              b"is gone" in plain(s.seen[mark:]))
         s.press("q")
         s.close()
 
