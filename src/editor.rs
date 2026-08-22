@@ -31,30 +31,46 @@ enum LineArg {
 struct Dialect {
     names: &'static [&'static str],
     line: LineArg,
-    wait: Option<&'static str>,
+    /// The flag that makes it block, `None` when it blocks already. Both spellings, so a
+    /// reviewer who already set the short one does not get the long one on top.
+    wait: Option<Wait>,
 }
+
+/// A wait flag and its short spelling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Wait {
+    long: &'static str,
+    short: &'static str,
+}
+
+const WAIT: Option<Wait> = Some(Wait { long: "--wait", short: "-w" });
+const BLOCK: Option<Wait> = Some(Wait { long: "--block", short: "-b" });
+/// `MacVim` and `gVim` take vim's own foreground flag, which has no long spelling.
+const FOREGROUND: Option<Wait> = Some(Wait { long: "-f", short: "-f" });
 
 const DIALECTS: &[Dialect] = &[
     // Terminal editors. Each holds the pane until it exits, so none takes a wait flag.
     Dialect {
-        names: &["vi", "vim", "nvim", "mvim", "lvim", "vis", "joe"],
+        names: &["vi", "vim", "nvim", "lvim", "vis", "joe"],
         line: LineArg::Plus,
         wait: None,
     },
     Dialect { names: &["nano", "micro", "kak"], line: LineArg::Plus, wait: None },
     Dialect { names: &["emacs", "emacsclient"], line: LineArg::Plus, wait: None },
     Dialect { names: &["hx", "helix"], line: LineArg::Suffix, wait: None },
+    // MacVim opens a window and returns, so it waits under vim's own flag rather than a GUI one.
+    Dialect { names: &["mvim", "gvim"], line: LineArg::Plus, wait: FOREGROUND },
     // Graphical editors.
     Dialect {
         names: &["code", "code-insiders", "codium", "vscodium", "cursor", "windsurf", "positron"],
         line: LineArg::Goto,
-        wait: Some("--wait"),
+        wait: WAIT,
     },
-    Dialect { names: &["subl", "sublime_text"], line: LineArg::Suffix, wait: Some("--wait") },
-    Dialect { names: &["zed"], line: LineArg::Suffix, wait: Some("--wait") },
-    Dialect { names: &["bbedit", "gedit"], line: LineArg::Plus, wait: Some("--wait") },
-    Dialect { names: &["xed", "mate"], line: LineArg::Flag, wait: Some("--wait") },
-    Dialect { names: &["kate"], line: LineArg::Flag, wait: Some("--block") },
+    Dialect { names: &["subl", "sublime_text"], line: LineArg::Suffix, wait: WAIT },
+    Dialect { names: &["zed"], line: LineArg::Suffix, wait: WAIT },
+    Dialect { names: &["bbedit", "gedit"], line: LineArg::Plus, wait: WAIT },
+    Dialect { names: &["xed", "mate"], line: LineArg::Flag, wait: WAIT },
+    Dialect { names: &["kate"], line: LineArg::Flag, wait: BLOCK },
     Dialect {
         names: &[
             "idea",
@@ -71,7 +87,7 @@ const DIALECTS: &[Dialect] = &[
             "fleet",
         ],
         line: LineArg::Flag,
-        wait: Some("--wait"),
+        wait: WAIT,
     },
 ];
 
@@ -114,9 +130,9 @@ pub fn resolve(
         return Some(EditorCommand { program, args });
     };
     // The reviewer's own flags win: a `$EDITOR` that already waits never waits twice, because
-    // not every editor's parser accepts a repeated flag.
-    if let Some(wait) = dialect.wait.filter(|w| !args.iter().any(|a| a == w)) {
-        args.push(wait.to_owned());
+    // not every editor's parser accepts a repeated flag. Either spelling counts as already set.
+    if let Some(wait) = dialect.wait.filter(|w| !args.iter().any(|a| a == w.long || a == w.short)) {
+        args.push(wait.long.to_owned());
     }
     match dialect.line {
         LineArg::Plus => {
@@ -221,7 +237,19 @@ mod tests {
     fn a_wait_flag_the_reviewer_already_set_is_not_repeated() {
         // `EDITOR="code --wait"` is the documented git setup, so it arrives already waiting.
         assert_eq!(argv(&env("code --wait").unwrap()), "code --wait -g /repo/src/lib.rs:41");
-        assert_eq!(argv(&env("code -w").unwrap()), "code -w --wait -g /repo/src/lib.rs:41");
+        // The short spelling is the same request, and a second flag is what some parsers reject.
+        assert_eq!(argv(&env("code -w").unwrap()), "code -w -g /repo/src/lib.rs:41");
+        assert_eq!(argv(&env("subl -w").unwrap()), "subl -w /repo/src/lib.rs:41");
+        assert_eq!(argv(&env("kate -b").unwrap()), "kate -b --line 41 /repo/src/lib.rs");
+        assert_eq!(argv(&env("mvim -f").unwrap()), "mvim -f +41 /repo/src/lib.rs");
+    }
+
+    #[test]
+    fn a_windowed_vim_is_told_to_stay_in_the_foreground() {
+        // MacVim and gVim open a window and return, unlike every other vi-family binary.
+        assert_eq!(argv(&env("mvim").unwrap()), "mvim -f +41 /repo/src/lib.rs");
+        assert_eq!(argv(&env("gvim").unwrap()), "gvim -f +41 /repo/src/lib.rs");
+        assert_eq!(argv(&env("vim").unwrap()), "vim +41 /repo/src/lib.rs", "terminal vim does not");
     }
 
     #[test]

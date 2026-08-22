@@ -188,6 +188,7 @@ fn run_editor(
         target.line,
     ) else {
         app.status = "set `editor` in the plugin config, or $EDITOR".into();
+        repaint(terminal, app)?;
         return Ok(());
     };
     logln!("editor run {} {:?}", command.program, command.args);
@@ -195,6 +196,10 @@ fn run_editor(
     // common locations every other host tool does (`specs/herdr-host.md`).
     let mut cmd = proc::command(&command.program);
     cmd.args(&command.args);
+
+    // Mouse reporting goes off below, so a button still held now would never report its
+    // release and its freeze would hold the open view's reloads (`specs/text-selection.md`).
+    app.cancel_gesture();
 
     leave_terminal_modes(kbd);
     let _ = execute!(io::stdout(), LeaveAlternateScreen);
@@ -209,18 +214,34 @@ fn run_editor(
     while event::poll(Duration::ZERO)? {
         let _ = event::read();
     }
-    let _ = terminal.clear();
 
     match launched {
         Ok(status) if status.success() => {
             let shown = target.path.strip_prefix(&app.repo).unwrap_or(&target.path);
             app.status = format!("edited {}", shown.display());
-            app.request_world_refresh(false, false);
+            app.request_world_refresh(true, false);
             app.refresh_commanded = true;
         }
         Ok(status) => app.status = format!("editor exited with {status}"),
         Err(e) => app.status = format!("editor failed: {e}"),
     }
+    repaint(terminal, app)?;
+    Ok(())
+}
+
+/// Paint the pane now, whatever the loop's next frame would have waited for.
+///
+/// The loop draws only after an event arrives, so a status set between frames stays invisible
+/// until the reviewer presses something else. The editor owned the screen meanwhile, so
+/// ratatui's previous buffer no longer describes it and the frame has to be a full one.
+///
+/// `Terminal::resize` rather than `Terminal::clear`: `clear` first round-trips a cursor-position
+/// query through stdin and blocks until the terminal answers, which swallows the reviewer's next
+/// keypress and leaves the message unpainted until they press something else. `resize` clears the
+/// same region and resets the same buffer with no query.
+fn repaint(terminal: &mut DefaultTerminal, app: &App) -> Result<()> {
+    let area = terminal.size()?.into();
+    terminal.resize(area)?;
     terminal.draw(|f| ui::render(f, app))?;
     Ok(())
 }

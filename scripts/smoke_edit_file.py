@@ -76,8 +76,11 @@ class Session:
     def __init__(self, binary, repo, editor):
         self.master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
-        env = {**os.environ, "TERM": "xterm-256color", "EDITOR": editor}
+        env = {**os.environ, "TERM": "xterm-256color"}
         env.pop("VISUAL", None)
+        env.pop("EDITOR", None)
+        if editor:
+            env["EDITOR"] = editor
         env.pop("HERDR_PLUGIN_CONFIG_DIR", None)  # standalone: no plugin config reads
         self.proc = subprocess.Popen(
             [binary, repo, "--poll", "600000"],
@@ -175,6 +178,10 @@ def main():
         out = s.press("r")
         check("reviewr repaints after the refresh", len(out) > 0)
         check("the status names the edited file", b"edited" in s.seen)
+        # The resume must repaint the whole pane, or the editor's leftovers stay on screen.
+        check("the resumed frame repaints the whole pane",
+              after.count(b"Changes") >= 1 and after.rindex(b"Changes") > after.index(ALT_ENTER),
+              "the pane did not redraw after re-entering the alternate screen")
 
         s.press("q")
         check("`q` still quits", s.proc.wait(timeout=10) == 0)
@@ -192,11 +199,27 @@ def main():
             with open(gui_log) as f:
                 gui_argv = [line.rstrip("\n") for line in f]
         check("a graphical editor is told to wait", "--wait" in gui_argv, f"argv={gui_argv}")
+        check("the pane comes back painted", b"Changes" in s.seen)
         check("and takes its line as --goto path:line",
               "-g" in gui_argv and bool(gui_argv) and ":" in gui_argv[-1],
               f"argv={gui_argv}")
         s.press("q")
         s.close()
+
+        # Every failure path has to reach the reviewer on the frame it happened, not on the
+        # next keypress. The loop draws only after an event arrives, so the run has to repaint.
+        for label, ed, needle in [
+            ("no editor set", None, b"set `editor`"),
+            ("a missing editor binary", "/nonexistent/nope", b"editor failed"),
+            ("an editor that exits nonzero", "/usr/bin/false", b"editor exited"),
+        ]:
+            s = Session(binary, root, ed)
+            s.drain()
+            mark = len(s.seen)
+            s.press("e")
+            check(f"{label} says so on the press", needle in s.seen[mark:])
+            s.press("q")
+            s.close()
 
     if failures:
         print(f"\n{len(failures)} check(s) failed: {', '.join(failures)}")

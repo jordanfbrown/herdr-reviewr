@@ -925,6 +925,24 @@ fn the_footer_keeps_its_actions_alongside_a_status() {
     );
 }
 
+/// The editor's failure has to reach the reviewer on the frame it happened, from either pane.
+#[test]
+fn the_footer_shows_an_editor_failure_from_either_pane() {
+    let mut app = edited_app();
+    on_changed_line(&mut app);
+    app.status = "editor failed: No such file or directory (os error 2)".to_string();
+    let footer = footer_line(&render(&app));
+    assert!(footer.contains("editor failed"), "on the read pane:\n{footer}");
+
+    app.focus = herdr_reviewr::app::Focus::Files;
+    let footer = footer_line(&render(&app));
+    assert!(footer.contains("editor failed"), "and on the navigator:\n{footer}");
+
+    // At the pane width the reviewer actually runs, not only the test default.
+    let footer = footer_line(&render_at(&app, 120));
+    assert!(footer.contains("editor failed"), "at 120 columns:\n{footer}");
+}
+
 #[test]
 fn empty_repo_shows_empty_states() {
     let r = Repo::init();

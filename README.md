@@ -290,9 +290,13 @@ number, and adds the wait flag graphical editors need so they don't return befor
 | editor | how it's called |
 | --- | --- |
 | vim, nvim, nano, micro, kakoune, emacs | `+41 path` |
-| helix, Zed, Sublime Text | `path:41` |
-| VS Code, Cursor, Windsurf, VSCodium | `--goto path:41 --wait` |
-| JetBrains IDEs, Xcode, Kate, TextMate | `--line 41 path --wait` |
+| MacVim, gVim | `-f +41 path` |
+| helix, Zed, Sublime Text | `path:41` (Zed and Sublime also get `--wait`) |
+| VS Code, Cursor, Windsurf, VSCodium | `--wait --goto path:41` |
+| JetBrains IDEs, Xcode, TextMate | `--wait --line 41 path` |
+| Kate | `--block --line 41 path` |
+
+If you already set a wait flag yourself, reviewr won't add a second one.
 
 For anything else, spell the command out yourself:
 

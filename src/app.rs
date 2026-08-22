@@ -2819,7 +2819,7 @@ impl App {
     /// End the live gesture without a copy: the reflow-input cancel, and the dissolve of a
     /// press that never moved or a lost gutter drag. The multi-click chain resets — only a
     /// gesture's own release continues it — and the freeze lifts (specs/text-selection.md).
-    pub(crate) fn cancel_gesture(&mut self) {
+    pub fn cancel_gesture(&mut self) {
         if !self.gesture_active() {
             return; // nothing live: the multi-click chain survives unrelated input
         }
@@ -2999,7 +2999,10 @@ impl App {
             // The selected navigator file at its start. A directory row names no file.
             return Some((self.current_entry()?.path.clone(), 1));
         }
-        let path = self.shown_entry()?.path;
+        // The open file, never the navigator's selection. The two diverge whenever a file was
+        // opened by path rather than by row, so pairing `shown_entry` with a line read from
+        // `visible` could name one file at another's line.
+        let path = self.diff_path.clone()?;
         // A markdown preview paints rendered blocks, not numbered source rows, so the cursor
         // names no line the reviewer can see and the file opens at its start.
         if self.preview_active() {
@@ -4004,9 +4007,9 @@ impl App {
         // `edit` opens the file wherever the read pane paints one and no comment claims the
         // key first. A commented line keeps `e edit` as its primary (`specs/input.md` Edit).
         if self.focus == Focus::Diff
-            && self.shown_entry().is_some()
+            && self.diff_path.is_some()
             && !self.visible.is_empty()
-            && self.comment_under_cursor().is_none()
+            && (self.preview_active() || self.comment_under_cursor().is_none())
         {
             out.push((A::EditFile, Do));
         }

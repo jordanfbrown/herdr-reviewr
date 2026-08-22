@@ -1,5 +1,5 @@
 ---
-Status: Draft
+Status: Current
 Created: 2026-07-17
 Last edited: 2026-08-22
 ---
@@ -112,15 +112,16 @@ The steps and the skips share the rest:
 
 `edit` acts on what the cursor names. On a commented line it opens that comment for editing. Everywhere else it opens the file in the reviewer's editor, and reviewr suspends while the editor owns the pane.
 
-- In the read pane the file opens at the line under the cursor. A deletion and a fold carry no worktree line, so the nearest numbered row above names it.
+- In the read pane the open file opens at the line under the cursor, never the navigator's selection, which can name a different file. A deletion and a fold carry no worktree line, so the nearest numbered row above names it.
 - On a file row in the navigator, and in a markdown preview, the file opens at line 1.
 - On a directory row `edit` is inert. The comments list still edits its highlighted comment, and the comment editor, the agent picker, the base picker, the find band, and the search screen keep the key as text or as their own action.
 - The editor command is the `editor` config key (`config.md`). With neither that key nor `$VISUAL` nor `$EDITOR` set, the press names what to set and opens nothing. reviewr never guesses an editor.
 - The editor's own name picks its arguments. Four spellings cover the editors reviewr knows: `+LINE path` for the vi family, nano, micro, kakoune, emacs, BBEdit, and gedit, `path:LINE` for helix, Zed, and Sublime Text, `-g path:LINE` for the VS Code family and its forks, and `--line LINE path` for the JetBrains family, Xcode, Kate, and TextMate. A name reviewr does not know opens the file without a line.
-- A graphical editor returns as soon as it hands the file to a running window, so reviewr adds its wait flag and the reviewer's own command keeps precedence over it. A terminal editor holds the pane already and gets none.
+- A graphical editor returns as soon as it hands the file to a running window, so reviewr adds its wait flag. A command that already carries that flag, in either spelling, gets no second one. A terminal editor holds the pane already and gets none.
 - The path reviewr passes is absolute, so no file name reads as a flag.
 - Returning restores the open file, the cursor, the scroll, the folds, and the footer's expansion.
-- A finished edit refreshes the changeset, and the diff reconciles in place (`overview.md` Continuity).
+- A finished edit refreshes the changeset and samples the turn, since the editor held the loop through every turn edge meanwhile (`herdr-host.md`). The diff reconciles in place (`overview.md` Continuity).
+- A live mouse gesture ends at the press, because mouse reporting stops while the editor runs and its release would never arrive (`text-selection.md`).
 
 The editor writes, never reviewr (`overview.md`). An edit made while an agent's turn is open joins that turn's diff, so `last-turn` shows the reviewer's own change beside the agent's (`herdr-host.md`).
 
