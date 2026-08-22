@@ -135,8 +135,8 @@ pub fn resolve(
 ) -> Option<EditorCommand> {
     // An absolute path can never be read as a flag, so no dialect needs a `--` guard.
     let file = path.to_string_lossy().into_owned();
-    if let Some(template) = configured.filter(|t| !t.trim().is_empty()) {
-        return Some(from_template(template, &file, line));
+    if let Some(template) = configured {
+        return from_template(template, &file, line);
     }
     let value = visual
         .filter(|v| !v.trim().is_empty())
@@ -226,43 +226,27 @@ fn dialect_for(program: &str) -> Option<&'static Dialect> {
     DIALECTS.iter().find(|d| d.names.contains(&name.as_str()))
 }
 
-/// Substitute every `{file}` and `{line}` in `word`, in one pass.
-///
-/// One pass, so a substituted value is never itself searched: a path that spells `{line}` is a
-/// file name, not a placeholder.
-fn substitute(word: &str, file: &str, line: &str) -> String {
-    let mut out = String::with_capacity(word.len());
-    let mut rest = word;
-    while let Some(at) = rest.find('{') {
-        out.push_str(&rest[..at]);
-        rest = &rest[at..];
-        if let Some(tail) = rest.strip_prefix("{file}") {
-            out.push_str(file);
-            rest = tail;
-        } else if let Some(tail) = rest.strip_prefix("{line}") {
-            out.push_str(line);
-            rest = tail;
-        } else {
-            out.push('{');
-            rest = &rest['{'.len_utf8()..];
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
 /// Build the command from a user template, substituting every `{file}` and `{line}`.
-fn from_template(template: &str, file: &str, line: u32) -> EditorCommand {
+///
+/// `{line}` goes first, and that ordering is the whole trick: a path is only ever substituted
+/// into text nothing looks at again, so a file named `{line}.cshtml` stays a file name rather
+/// than becoming a second placeholder.
+///
+/// `None` when the template names no program. The config layer rejects an empty value, but a
+/// value of two quote characters is not empty and splits to one empty word, and handing that
+/// to the pane would flip the screen for a spawn that cannot succeed.
+fn from_template(template: &str, file: &str, line: u32) -> Option<EditorCommand> {
     let named_file = template.contains("{file}");
     let line = line.to_string();
-    let mut words = split_command(template).into_iter().map(|w| substitute(&w, file, &line));
-    let program = words.next().unwrap_or_default();
+    let substitute = |w: String| w.replace("{line}", &line).replace("{file}", file);
+    let mut words = split_command(template).into_iter().map(substitute);
+    let program = words.next().filter(|p| !p.is_empty())?;
     let mut args: Vec<String> = words.collect();
     if !named_file {
         args.push(file.to_owned());
     }
     let wants_terminal = wants_terminal(&program);
-    EditorCommand { program, args, wants_terminal }
+    Some(EditorCommand { program, args, wants_terminal })
 }
 
 #[cfg(test)]
@@ -358,6 +342,16 @@ mod tests {
         // An unknown binary says nothing, and only one of the two guesses is survivable.
         assert!(env("myeditor").unwrap().wants_terminal);
         assert!(cfg("myed {file}"));
+    }
+
+    #[test]
+    fn a_template_naming_no_program_resolves_to_no_editor() {
+        // Two quote characters are not an empty value, so the config layer admits them. Handing
+        // that to the pane would flip the screen for a spawn that cannot succeed.
+        assert!(resolve(Some("\"\""), None, None, &p(), 41).is_none());
+        assert!(resolve(Some("   "), None, None, &p(), 41).is_none());
+        // And a configured editor never falls through to the environment's.
+        assert!(resolve(Some("\"\""), Some("vim"), Some("nano"), &p(), 41).is_none());
     }
 
     #[test]

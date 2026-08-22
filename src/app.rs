@@ -4007,7 +4007,7 @@ impl App {
         } else if self.select_anchor.is_some() {
             out.push((A::Comment, Primary));
             out.push((A::ClearSelection, Do));
-        } else if self.comment_under_cursor().is_some() {
+        } else if self.comment_claims_edit() {
             out.push((A::EditComment, Primary));
             out.push((A::DeleteComment, Do));
             out.push((A::JumpComment, Do));
@@ -4022,8 +4022,6 @@ impl App {
             }
         }
 
-        // `edit` opens the file wherever the read pane paints one and no comment claims the
-        // key first. A commented line keeps `e edit` as its primary (`specs/input.md` Edit).
         // `edit` offers the file wherever the press would open one, asked once for every
         // surface so the bar can neither miss a row nor name one twice (`specs/input.md` Edit).
         // It sits ahead of the navigator's own keys: a narrow row trims trailing actions

@@ -74,6 +74,7 @@ def make_editor(bindir, argv_log, name, holds=0):
         f.write(
             "#!/bin/sh\n"
             f'printf "%s\\n" "$@" > {argv_log}\n'
+            f'printf "cwd=%s\\npath=%s\\n" "$PWD" "$PATH" > {argv_log}.env\n'
             # Proof the editor owns a real terminal: this reaches the screen only if reviewr
             # actually left the alternate screen.
             'printf "FAKE-EDITOR-IS-ON-SCREEN\\n"\n'
@@ -89,7 +90,7 @@ def make_editor(bindir, argv_log, name, holds=0):
 
 
 class Session:
-    def __init__(self, binary, repo, editor):
+    def __init__(self, binary, repo, editor, visual=None, config_dir=None, poll=600000):
         self.master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
         env = {**os.environ, "TERM": "xterm-256color"}
@@ -97,9 +98,13 @@ class Session:
         env.pop("EDITOR", None)
         if editor:
             env["EDITOR"] = editor
+        if visual:
+            env["VISUAL"] = visual
         env.pop("HERDR_PLUGIN_CONFIG_DIR", None)  # standalone: no plugin config reads
+        if config_dir:
+            env["HERDR_PLUGIN_CONFIG_DIR"] = config_dir
         self.proc = subprocess.Popen(
-            [binary, repo, "--poll", "600000"],
+            [binary, repo, "--poll", str(poll)],
             stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True,
         )
         os.close(slave)
@@ -131,9 +136,8 @@ class Session:
     def press_bounded(self, key, seconds):
         """Send a key and read for a fixed span.
 
-        While a graphical editor is open the pane repaints on its own clock, so it never falls
-        quiet and [`drain`]'s quiet window never closes. A bounded read is the only way to look
-        at the screen mid-edit.
+        A fixed window, not [`drain`]'s quiet one, so a check can look at the screen at a chosen
+        moment during an edit rather than whenever the pane happens to fall silent.
         """
         os.write(self.master, key.encode())
         return self.drain(quiet=0.3, timeout=seconds)
@@ -176,15 +180,28 @@ def main():
         os.makedirs(root)
         file_path = make_repo(root)
         argv_log = os.path.join(home, "argv.txt")
-        editor = make_editor(bindir, argv_log, "vim")
+        # It holds the pane for a moment, so a key can be typed while the editor owns it.
+        editor = make_editor(bindir, argv_log, "vim", holds=2)
 
         s = Session(binary, root, editor)
         s.drain()  # startup paint
         check("the pane starts on the alternate screen", ALT_ENTER in s.seen)
 
         before = len(s.seen)
-        out = s.press("e")
+        os.write(s.master, b"e")
+        time.sleep(0.7)  # the editor owns the pane by now
+        # Type-ahead, and the editor's own teardown queries answer in the same bytes: reviewr
+        # must discard what was buffered rather than read `q` as a command on the way back.
+        os.write(s.master, b"q")
+        # Read until the pane is back: the editor is still holding it when the quiet window
+        # would otherwise close.
+        deadline = time.perf_counter() + 20
+        while ALT_ENTER not in s.seen[before:] and time.perf_counter() < deadline:
+            s.drain(quiet=0.3, timeout=2.0)
+        s.drain()
         after = s.seen[before:]
+        check("what was typed while the editor held the pane is discarded",
+              s.proc.poll() is None, "reviewr acted on the buffered key and exited")
 
         check("`e` leaves the alternate screen", ALT_LEAVE in after)
         check("the editor's own output reaches the terminal",
@@ -212,9 +229,6 @@ def main():
             body = f.read()
         check("the editor's write lands in the worktree", EDITED_LINE.decode() in body)
 
-        out = s.press("r")
-        check("reviewr repaints after the refresh", len(out) > 0)
-        check("the status names the edited file", b"edited" in plain(s.seen))
         # The resume must repaint the whole pane, or the editor's leftovers stay on screen.
         check("the resumed frame repaints the whole pane",
               ALT_ENTER in after
@@ -222,21 +236,34 @@ def main():
               and after.rindex(b"Changes") > after.index(ALT_ENTER),
               "the pane did not redraw after re-entering the alternate screen")
 
+        env = {}
+        if os.path.exists(argv_log + ".env"):
+            with open(argv_log + ".env") as f:
+                env = dict(line.rstrip("\n").split("=", 1) for line in f if "=" in line)
+        check("the editor runs in the reviewed repository",
+              os.path.realpath(env.get("cwd", "")) == os.path.realpath(root),
+              f"cwd={env.get('cwd')}")
+        check("and inherits the reviewer's own PATH order",
+              env.get("path", "").startswith(os.environ.get("PATH", "").split(":")[0]),
+              f"path={env.get('path', '')[:80]}")
+
+        s.press("r")
+        check("the status names the edited file", b"edited" in plain(s.seen))
+
         s.press("q")
         check("`q` still quits", s.proc.wait(timeout=10) == 0)
         s.close()
 
-        # A graphical editor takes a different dialect and must be made to block, or the pane
-        # repaints before the reviewer has typed anything.
-        # It holds the file the way a reviewer does, so the checks below run against a pane
-        # with an editor still open.
+        # A window editor takes a different dialect and holds the file the way a reviewer does,
+        # so the checks below run against a pane with an editor still open. A real poll, since
+        # the poll is what shows the write.
         gui_log = os.path.join(home, "argv-gui.txt")
-        gui = make_editor(bindir, gui_log, "code", holds=6)
+        gui = make_editor(bindir, gui_log, "code", holds=12)
         # Its own repository, so the earlier session's write is not already on screen.
         gui_root = os.path.join(home, "gui-repo")
         os.makedirs(gui_root)
         make_repo(gui_root)
-        s = Session(binary, gui_root, gui)
+        s = Session(binary, gui_root, gui, poll=1000)
         s.drain()
         gui_mark = len(s.seen)
         s.press_bounded("e", 2.0)
@@ -259,13 +286,58 @@ def main():
               len(s.press_bounded("j", 1.0)) > 0)
         # Nothing is watching the editor, so the pane rests: no wake of its own, no redraw.
         before = s.cpu_seconds()
-        s.drain(quiet=0.3, timeout=3.0)
+        s.drain(quiet=0.3, timeout=2.0)
         burned = s.cpu_seconds() - before
-        check("and rests while it waits", burned < 0.2, f"burned {burned:.2f}s of cpu in 3s")
+        check("and rests while it waits", burned < 0.2, f"burned {burned:.2f}s of cpu in 2s")
         # The same file twice is one window, so a held key cannot launch an editor per repeat.
         again = plain(s.press_bounded("e", 1.5))
         check("a second press on the same file opens no second editor",
               b"already open" in again)
+        # Nothing waits for the editor to close: the poll shows the write while the file is
+        # still out, with no keypress from the reviewer.
+        opened_at = time.perf_counter()
+        while EDITED_LINE not in plain(s.seen[gui_mark:]) and time.perf_counter() - opened_at < 8:
+            s.drain(quiet=0.3, timeout=1.0)
+        check("the poll shows the write with the file still out",
+              EDITED_LINE in plain(s.seen[gui_mark:]))
+        # And the file is openable again once the editor is gone, or `e` refuses it for the
+        # rest of the session.
+        while time.perf_counter() - opened_at < 14:
+            s.drain(quiet=0.3, timeout=1.0)
+        reopened = plain(s.press_bounded("e", 2.0))
+        check("a file put down can be opened again",
+              b"opened" in reopened and b"already open" not in reopened)
+
+        # The `editor` config key is the documented override, and nothing else proves it
+        # reaches the spawn: the two sources below are both live, and only one may win.
+        cfg_dir = os.path.join(home, "cfg")
+        os.makedirs(cfg_dir)
+        cfg_log = os.path.join(home, "argv-cfg.txt")
+        env_log = os.path.join(home, "argv-env.txt")
+        configured = make_editor(bindir, cfg_log, "nano")
+        from_env = make_editor(bindir, env_log, "micro")
+        with open(os.path.join(cfg_dir, "config.toml"), "w") as f:
+            f.write(f'editor = "{configured} +{{line}} {{file}}"\n')
+        s = Session(binary, root, from_env, config_dir=cfg_dir)
+        s.drain()
+        s.press("e")
+        check("the `editor` config key outranks the environment",
+              os.path.exists(cfg_log) and not os.path.exists(env_log))
+        s.press("q")
+        s.close()
+
+        # `$VISUAL` outranks `$EDITOR`, and the two arrive at the same call as separate
+        # arguments, so only a live check catches them being transposed there.
+        visual_log = os.path.join(home, "argv-visual.txt")
+        os.remove(env_log) if os.path.exists(env_log) else None
+        visual = make_editor(bindir, visual_log, "kak")
+        s = Session(binary, root, from_env, visual=visual)
+        s.drain()
+        s.press("e")
+        check("$VISUAL outranks $EDITOR",
+              os.path.exists(visual_log) and not os.path.exists(env_log))
+        s.press("q")
+        s.close()
 
         # A window editor that never launches has to say so: reviewr is not watching it, and
         # its own output goes nowhere.

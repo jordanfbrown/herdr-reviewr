@@ -216,9 +216,9 @@ fn drain_input(app: &mut App) -> Result<()> {
 
 /// A window editor reviewr has launched and not yet reaped (`specs/input.md` Edit).
 ///
-/// reviewr never waits on one and never asks it anything. The list exists so a long session
-/// leaves no children behind, and so a second press on a file already out says so instead of
-/// launching a second editor.
+/// reviewr never waits on one and never asks it anything. The list is swept at the next window
+/// editor press, which is what lets a second press on a file already out say so instead of
+/// launching another, and what keeps a run of presses from stacking up exited children.
 struct Launched {
     child: std::process::Child,
     path: String,
@@ -301,32 +301,35 @@ fn run_editor(
     drain_input(app)?;
 
     match launched {
-        Ok(status) if status.success() => {
-            app.status = format!("edited {}", target.path);
+        // The editor ran, so the worktree may have moved whatever it exited with: `:cq` after a
+        // write is a non-zero exit over a real edit (`specs/input.md` Edit).
+        Ok(status) => {
+            app.status = if status.success() {
+                format!("edited {}", target.path)
+            } else {
+                format!("editor exited with {status}")
+            };
             app.request_world_refresh(false, false);
             app.refresh_commanded = true;
         }
-        Ok(status) => app.status = format!("editor exited with {status}"),
         Err(e) => app.status = format!("editor failed: {e}"),
     }
-    repaint(terminal, app)?;
+    invalidate_screen(terminal)?;
     Ok(())
 }
 
-/// Paint the pane now, whatever the loop's next frame would have waited for.
+/// Drop what ratatui believes is on screen, so the loop's next draw is a full one.
 ///
-/// The loop draws only after an event arrives, so a status set between frames stays invisible
-/// until the reviewer presses something else. The editor owned the screen meanwhile, so
-/// ratatui's previous buffer no longer describes it and the frame has to be a full one.
+/// The editor owned the terminal meanwhile, so the previous buffer no longer describes it and a
+/// diffed frame would leave the editor's leavings up. The loop draws at the top of every pass,
+/// which is the repaint itself; this only makes that draw whole.
 ///
 /// `Terminal::resize` rather than `Terminal::clear`: `clear` first round-trips a cursor-position
 /// query through stdin and blocks until the terminal answers, which swallows the reviewer's next
-/// keypress and leaves the message unpainted until they press something else. `resize` clears the
-/// same region and resets the same buffer with no query.
-fn repaint(terminal: &mut DefaultTerminal, app: &App) -> Result<()> {
+/// keypress. `resize` clears the same region and resets the same buffer with no query.
+fn invalidate_screen(terminal: &mut DefaultTerminal) -> Result<()> {
     let area = terminal.size()?.into();
     terminal.resize(area)?;
-    terminal.draw(|f| ui::render(f, app))?;
     Ok(())
 }
 

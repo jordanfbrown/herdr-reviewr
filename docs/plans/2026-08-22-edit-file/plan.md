@@ -17,19 +17,19 @@ returns them to the same place.
 
 ## Definition of Done
 
-- [ ] `e` on an uncommented read-pane line opens the editor at that line. The edit shows in the diff on return.
-- [ ] `e` on a commented line still opens the comment editor. `e` in the comments list still edits the highlighted comment.
-- [ ] `e` on a navigator file row opens that file at line 1. A directory row does nothing.
-- [ ] `e` in a markdown preview opens the previewed file at line 1.
-- [ ] `e` on a deletion or a fold opens at the nearest numbered row above.
-- [ ] `editor = "code -g {file}:{line}"` substitutes both placeholders. A value naming neither gets the path appended.
-- [ ] With no `editor` key, `$EDITOR` alone opens at the line for the vi family, nano, micro, kakoune, emacs, helix, the VS Code family and its forks, Zed, Sublime Text, the JetBrains family, Xcode, Kate, TextMate, BBEdit, and gedit.
-- [ ] A graphical editor is given its wait flag, and a reviewer who already set one does not get it twice.
-- [ ] An editor reviewr does not know opens the file without a line rather than a guessed flag.
-- [ ] With no `editor` key and no `$VISUAL` or `$EDITOR`, `e` names what to set and opens nothing.
-- [ ] Returning restores the open file, the cursor, the scroll, the folds, and the footer's expansion.
-- [ ] The footer reads `e edit file` on exactly the rows where it works.
-- [ ] `--resolve-plugin-config` prints `editor`.
+- [x] `e` on an uncommented read-pane line opens the editor at that line. The edit shows in the diff on return.
+- [x] `e` on a commented line still opens the comment editor. `e` in the comments list still edits the highlighted comment.
+- [x] `e` on a navigator file row opens that file at line 1. A directory row does nothing.
+- [x] `e` in a markdown preview opens the previewed file at line 1.
+- [x] `e` on a deletion or a fold opens at the nearest numbered row above.
+- [x] `editor = "code -g {file}:{line}"` substitutes both placeholders. A value naming neither gets the path appended.
+- [x] With no `editor` key, `$EDITOR` alone opens at the line for the vi family, nano, micro, kakoune, emacs, helix, the VS Code family and its forks, Zed, Sublime Text, the JetBrains family, Xcode, Kate, TextMate, BBEdit, and gedit.
+- [x] A graphical editor is given its wait flag, and a reviewer who already set one does not get it twice.
+- [x] An editor reviewr does not know opens the file without a line rather than a guessed flag.
+- [x] With no `editor` key and no `$VISUAL` or `$EDITOR`, `e` names what to set and opens nothing.
+- [x] Returning restores the open file, the cursor, the scroll, the folds, and the footer's expansion.
+- [x] The footer reads `e edit file` on exactly the rows where it works.
+- [x] `--resolve-plugin-config` prints `editor`.
 
 ## Out of Scope
 
@@ -39,13 +39,13 @@ returns them to the same place.
 
 ## Execution Plan
 
-1. [ ] `src/config.rs`: add `editor: Option<String>` beside `github_host`. Register `"editor"` in `KNOWN_KEYS` (line 76 region), parse it at the `github_host` arm (line 419 region), add the accessor and the `to_json` entry. Reject an empty string as an invalid value. Unit tests for parsing, the empty-string rejection, and the JSON round trip.
-2. [ ] `src/lib.rs`: extract the inline mode setup at lines 80 to 90 into `enter_terminal_modes(kbd)`, the mirror of `restore_terminal(kbd)` at line 147. Call it from `run()` and from the resume path, so one function owns the mode stack.
-3. [ ] `src/app.rs`: add `EditorTarget { path: String, line: u32 }` and `editor_request: Option<EditorTarget>`. Split `start_edit` so it routes to the comment when `target_comment()` finds one and to a new `request_edit_file()` otherwise. `edit_file_target()` reads the cursor: the read pane takes `self.visible[..=self.diff_cursor].iter().rev().find_map(Row::new_no)` and falls back to 1, the navigator takes `current_entry()` at line 1, a preview takes 1. Unit tests per surface, no terminal needed.
-4. [ ] `src/lib.rs`: `run_editor` services one request between frames. It resolves the command from `PluginConfig::editor()`, else `$VISUAL`, else `$EDITOR`, substitutes `{file}` and `{line}`, appends the path when the value names neither, spawns through `proc::command`, then re-enters the modes and calls `request_world_refresh(false, false)`.
-5. [ ] `src/app.rs` and `src/ui.rs`: add `FooterAction::EditFile` with the label `e edit file`, and push it on the diff-line, preview-line, fold, open-preview, and file-row cases in `footer_actions`. The commented-line case keeps `e edit` as its primary.
-6. [ ] `tests/app_flow.rs`: the comment-wins contest on a commented line, `e` in the comments list still reaching the highlighted comment through the split `start_edit`, the directory-row inertia, the footer label per row, and a world refresh after an external edit rebuilding the open diff's content.
-7. [ ] `README.md` keybinding table and the config section. `CHANGELOG.md` bullet under `## [Unreleased]`, naming both contributors.
+1. [x] `src/config.rs`: add `editor: Option<String>` beside `github_host`. Register `"editor"` in `KNOWN_KEYS` (line 76 region), parse it at the `github_host` arm (line 419 region), add the accessor and the `to_json` entry. Reject an empty string as an invalid value. Unit tests for parsing, the empty-string rejection, and the JSON round trip.
+2. [x] `src/lib.rs`: extract the inline mode setup at lines 80 to 90 into `enter_terminal_modes(kbd)`, the mirror of `restore_terminal(kbd)` at line 147. Call it from `run()` and from the resume path, so one function owns the mode stack.
+3. [x] `src/app.rs`: add `EditTarget { path: String, line: u32 }` and `editor_request: Option<EditTarget>`. `start_edit` routes to the comment when `comment_claims_edit()` finds one and to the file otherwise. `edit_target()` reads the cursor: the read pane takes `self.visible[..=self.diff_cursor].iter().rev().find_map(Row::new_no)` and falls back to 1, the navigator takes `current_entry()` at line 1, a preview takes 1. Unit tests per surface, no terminal needed.
+4. [x] `src/lib.rs`: `run_editor` services one request between frames. It resolves the command from `PluginConfig::editor()`, else `$VISUAL`, else `$EDITOR`, substitutes `{file}` and `{line}`, appends the path when the value names neither, spawns through `proc::user_command`, then re-enters the modes and calls `request_world_refresh(false, false)`.
+5. [x] `src/app.rs` and `src/ui.rs`: add `FooterAction::EditFile` with the label `e edit file`, and push it on the diff-line, preview-line, fold, open-preview, and file-row cases in `footer_actions`. The commented-line case keeps `e edit` as its primary.
+6. [x] `tests/app_flow.rs`: the comment-wins contest on a commented line, `e` in the comments list still reaching the highlighted comment through the split `start_edit`, the directory-row inertia, the footer label per row, and a world refresh after an external edit rebuilding the open diff's content.
+7. [x] `README.md` keybinding table and the config section. `CHANGELOG.md` bullet under `## [Unreleased]`, naming both contributors.
 
 ## Likely Files
 
@@ -98,3 +98,5 @@ true without misstating who wrote the code.
 - 2026-08-22: initial plan.
 - 2026-08-22: the user required every major 2026 editor to work, terminal and IDE alike -> the `$EDITOR` fallback grew from one `+{line}` form to a name-keyed table of four argument dialects plus the wait flag graphical editors need -> `src/editor.rs`, `specs/input.md` Edit, `specs/config.md` Key semantics. The `editor` template key stays as the escape hatch, which is what makes a stale table fixable by the reviewer.
 - 2026-08-22: the PTY smoke test found `e` opening the scripted editor itself, because the harness wrote it inside the repository under review -> the script moved outside the worktree -> `scripts/smoke_edit_file.py`. No product change.
+- 2026-08-22: a window editor handed the pane leaves it blank and cooked for the whole edit, where a `ctrl+c` ends the session and every comment in it -> the two editor kinds split on the binary name, and a window editor is opened and forgotten while the 2s poll shows its writes -> `src/editor.rs` `wants_terminal`, `src/lib.rs` `run_editor`, `specs/input.md` Edit. An intermediate revision watched each window editor for its close; it was cut once the poll proved to show the write sooner.
+- 2026-08-22: the terminal handoff has no unit-testable surface -> `scripts/smoke_edit_file.py` became the acceptance instrument for the editor path and gained a `just` recipe -> `justfile`, `AGENTS.md` Commands.
