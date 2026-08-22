@@ -136,7 +136,7 @@ The footer offers `e edit file` exactly on the rows that open a file, and never 
 
 - The editor command is the `editor` config key (`config.md`). With neither that key nor `$VISUAL` nor `$EDITOR` set, the press names what to set and opens nothing. reviewr never guesses an editor.
 - The editor's own name picks its arguments. Four spellings cover the editors reviewr knows: `+LINE path` for the vi family, nano, micro, kakoune, emacs, BBEdit, and gedit, `path:LINE` for helix, Zed, and Sublime Text, `-g path:LINE` for the VS Code family and its forks, and `--line LINE path` for the JetBrains family, Xcode, Kate, and TextMate. A name reviewr does not know opens the file without a line.
-- reviewr adds no flag of its own to any editor, only the line and the path. A window editor's launcher hands the file over and returns, and nothing waits on it.
+- reviewr adds no flag of its own to any editor, only the line and the path.
 - A command already carrying `--wait` or `--block` is a window editor, whatever its binary is called. No terminal editor takes such a flag, because holding the terminal is what one inherently does. Only those spellings count: `-w` and `-b` are ordinary short flags elsewhere.
 - Failing that, the binary's own name answers which kind it is, in every path, the `editor` key's command included. A name reviewr does not know is handed the pane, which is the guess a terminal editor can survive.
 - The path reviewr passes is absolute, so no file name reads as a flag.

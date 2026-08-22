@@ -309,8 +309,9 @@ editor = "myeditor --at {line} {file}"
 Quote a path that contains a space — `"/Applications/Sublime Text.app/.../subl"` — in the config
 key or in `$EDITOR`. No shell runs the command, so quoting is the only escape.
 
-`{file}` and `{line}` are substituted wherever they appear. This value is the whole command, so
-reviewr adds nothing to it. If your command carries `--wait` or `--block`, reviewr takes that as
+`{file}` and `{line}` are substituted wherever they appear, and they are the only placeholders —
+anything else in braces is a config error rather than a word passed through. This value is the
+whole command, so reviewr adds nothing to it. If your command carries `--wait` or `--block`, reviewr takes that as
 a window editor and leaves the pane alone, even when it can't place the binary — which is what
 you want if you point it at something like `/Applications/Zed.app/Contents/MacOS/cli`. With no `editor` key and no `$EDITOR`, `e` tells you what to set
 rather than opening something you didn't choose.
