@@ -280,16 +280,14 @@ header reads `no base`, with the footer offering `B pick base`.
 
 ### Editor
 
-`e` opens what the cursor names in your editor: the file you're reading at the line you're on,
-or the selected file in the navigator. On a line you've already commented, `e` still edits the
-comment.
+`e` opens the file at the line you're on, or the navigator's selected file. On a line you have
+already commented, `e` edits the comment instead.
 
-A terminal editor takes over the pane, and reviewr refreshes when you quit it. A window editor
-opens its own window, so reviewr stays put and you keep the diff on screen — save, and your
-change shows up in the diff on its own.
+A terminal editor takes the pane, and reviewr refreshes when you quit it. A window editor opens
+its own window, so the diff stays on screen and your save turns up in it on the next poll.
 
-Set `$EDITOR` (or `$VISUAL`) and it just works. reviewr knows how each editor wants its line
-number, and adds nothing else:
+Set `$EDITOR` (or `$VISUAL`). reviewr knows how each editor wants its line number, keeps the
+flags you set yourself, and adds nothing of its own:
 
 | editor | how it's called |
 | --- | --- |
@@ -298,23 +296,20 @@ number, and adds nothing else:
 | VS Code and its forks (Cursor, Windsurf, VSCodium, Insiders, Positron) | `-g path:41` |
 | JetBrains IDEs, Xcode (`xed`), TextMate, Kate | `--line 41 path` |
 
-Whatever flags you put in `$EDITOR` yourself are kept.
-
-For anything else, spell the command out yourself:
+For anything else, spell out the command:
 
 ```toml
 editor = "myeditor --at {line} {file}"
 ```
 
-Quote a path that contains a space — `"/Applications/Sublime Text.app/.../subl"` — in the config
-key or in `$EDITOR`. No shell runs the command, so quoting is the only escape.
+`{file}` and `{line}` substitute wherever they appear. Anything else in braces is a config
+error. No shell runs the command, so quote a path with a space in it, in the key or in
+`$EDITOR`: `"/Applications/Sublime Text.app/.../subl"`.
 
-`{file}` and `{line}` are substituted wherever they appear, and they are the only placeholders —
-anything else in braces is a config error rather than a word passed through. This value is the
-whole command, so reviewr adds nothing to it. If your command carries `--wait` or `--block`, reviewr takes that as
-a window editor and leaves the pane alone, even when it can't place the binary — which is what
-you want if you point it at something like `/Applications/Zed.app/Contents/MacOS/cli`. With no `editor` key and no `$EDITOR`, `e` tells you what to set
-rather than opening something you didn't choose.
+A command carrying `--wait` or `--block` counts as a window editor and keeps the pane, even
+under a name reviewr does not know like `/Applications/Zed.app/Contents/MacOS/cli`.
+
+With no `editor` key and no `$EDITOR`, `e` tells you what to set.
 
 ### Keybindings
 
