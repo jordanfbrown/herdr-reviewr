@@ -3004,7 +3004,7 @@ fn the_picker_titles_the_count_and_aligns_the_dim_trail_in_one_column() {
     let app = picker_app();
     let out = render(&app);
 
-    assert!(out.contains("Send 3 comments to"), "the title counts the comments:\n{out}");
+    assert!(out.contains("send 3 comments to"), "the title counts the comments:\n{out}");
 
     let rows: Vec<&str> = out
         .lines()
@@ -3139,7 +3139,7 @@ fn the_branch_header_names_the_base_and_its_click_opens_the_picker() {
     let keymap = app.keymap().clone();
     handle_mouse(&mut app, click, AREA, &[], &keymap, &herdr_reviewr::export::Clipboard).unwrap();
     let frame = render(&app);
-    assert!(frame.contains("Pick base"), "the click opens the picker popup");
+    assert!(frame.contains("base · 2 branches"), "the click opens the picker popup");
     assert!(frame.contains("dev"), "the sibling branch is a row");
     assert!(frame.contains("default"), "the default branch is marked");
 }

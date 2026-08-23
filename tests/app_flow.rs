@@ -1146,7 +1146,8 @@ fn the_all_files_move_band_drops_the_inert_hunk_step() {
 
 #[test]
 fn the_go_band_never_repeats_the_empty_scope_primary() {
-    // An empty changeset leads row 1 with `scope`; the `go` band must not list it a second time.
+    // An empty changeset leads row 1 with the other scopes; the `go` band must not list
+    // `scope` a second time (`specs/input.md`).
     let r = Repo::init();
     r.write("a.rs", "one\n");
     r.commit_all("c"); // nothing uncommitted → the empty state
@@ -1154,10 +1155,13 @@ fn the_go_band_never_repeats_the_empty_scope_primary() {
     let bands = app.footer_bands();
     assert_eq!(
         bands.first().map(|&(a, _)| a),
-        Some(FooterAction::Scope),
-        "scope leads the empty state"
+        Some(FooterAction::ScopeOther),
+        "the other scopes lead the empty state"
     );
-    let scopes = bands.iter().filter(|&&(a, _)| a == FooterAction::Scope).count();
+    let scopes = bands
+        .iter()
+        .filter(|&&(a, _)| matches!(a, FooterAction::Scope | FooterAction::ScopeOther))
+        .count();
     assert_eq!(scopes, 1, "scope is not repeated in the go band");
 }
 
@@ -5566,12 +5570,27 @@ fn based_repo() -> Repo {
 }
 
 #[test]
-fn the_base_picker_opens_only_on_the_branch_scope_without_a_flag() {
+fn the_base_picker_opens_on_every_scope_without_a_flag_and_a_pick_switches_to_branch() {
     let r = based_repo();
     let mut app = app_on(&r);
     app.open_base_picker();
-    assert_eq!(app.mode, Mode::Normal, "the picker is inert off the branch scope");
+    assert_eq!(app.mode, Mode::BasePick, "the picker opens off the branch scope too");
+    app.close_base_picker();
+    assert_eq!(app.scope, Scope::Uncommitted, "a cancel leaves the scope alone");
+    app.open_base_picker();
+    app.base_picker_move(1);
+    app.base_picker_pick().unwrap();
+    assert_eq!(app.scope, Scope::Branch, "a pick switches to the scope it configures");
+    assert_eq!(
+        app.branch_base.winner.as_ref().map(herdr_reviewr::git::ResolvedBase::name),
+        Some("dev")
+    );
 
+    app.set_scope(Scope::Uncommitted).unwrap();
+    assert!(
+        app.footer_bands().iter().any(|&(a, b)| a == FooterAction::BasePick && b == Band::Go),
+        "the go band carries the key on every scope"
+    );
     app.set_scope(Scope::Branch).unwrap();
     app.open_base_picker();
     assert_eq!(app.mode, Mode::BasePick);
@@ -5581,7 +5600,7 @@ fn the_base_picker_opens_only_on_the_branch_scope_without_a_flag() {
     assert_eq!(bp.rows[0].name(), "main", "the default branch sorts ahead of recency");
     assert!(bp.rows[0].is_default());
     assert!(names.contains(&"dev"));
-    assert_eq!(bp.cursor, 0, "the highlight opens on the current base");
+    assert_eq!(bp.rows[bp.cursor].name(), "dev", "the highlight opens on the current base");
     app.close_base_picker();
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.base_picker.is_none());

@@ -114,7 +114,7 @@ A send that does not land says so in one short sentence and keeps every comment.
 Each row leads with the agent's name, with its state and tab trail dim behind. The highlight is a row fill (`tui.md`).
 
 ```
-┌ Send 3 comments to ─────────────────────────────────────────┐
+┌ send 3 comments to ─────────────────────────────────────────┐
 │ 1  claude        idle · Grip Outreach · last used           │  ← highlighted, filled row
 │ 2  release-bot   idle · Grip Outreach Campaign              │
 │ 3  codex         working · 3                                │

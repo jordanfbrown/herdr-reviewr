@@ -558,8 +558,8 @@ pub enum FooterAction {
     MoveCommitRow,
     CommitAnchor,
     CloseCommitPicker,
-    /// The two scopes to switch away to, from the branch-scope no-base row — `b` is the
-    /// scope already showing, so its hint would offer a no-op (`specs/input.md`).
+    /// The scopes to switch away to, on every row 1 that leads with a scope switch: the
+    /// scope already showing would offer a no-op there (`specs/input.md`).
     ScopeOther,
     OpenPr,
     Refresh,
@@ -4170,6 +4170,7 @@ impl App {
             // actions apply instead.
             out.push((A::Preview, Primary));
         } else if self.file_rows.is_empty()
+            && self.scope == Scope::Branch
             && self.branch_base.winner.is_none()
             && self.base_pick_available()
         {
@@ -4186,8 +4187,9 @@ impl App {
             out.push((A::ScopeOther, Do));
             out.push((A::Refresh, Do));
         } else if self.file_rows.is_empty() {
-            // Nothing in scope to review: only switching scope or refreshing is useful.
-            out.push((A::Scope, Primary));
+            // Nothing in scope to review: only switching scope or refreshing is useful, and
+            // the scope already showing is never offered on row 1 (`specs/input.md`).
+            out.push((A::ScopeOther, Primary));
             out.push((A::Refresh, Do));
         } else if self.focus == Focus::Files {
             match self.file_rows.get(self.file_cursor).map(|r| &r.kind) {
@@ -4207,7 +4209,7 @@ impl App {
                 out.push((A::TogglePane, Do));
             } else {
                 // Diff focused but nothing to show (e.g. a binary): only the scope switch helps.
-                out.push((A::Scope, Primary));
+                out.push((A::ScopeOther, Primary));
             }
         } else if self.on_fold() {
             out.push((A::ExpandFold, Primary));
@@ -4396,11 +4398,11 @@ impl App {
         self.export_to_agent(&agent);
     }
 
-    /// Whether the base picker can open here: a file tab, the `branch` scope, and no
-    /// `--base` flag (`specs/input.md` Base picker).
+    /// Whether the base picker can open here: a file tab and no `--base` flag, whatever the
+    /// scope, like the commit picker (`specs/input.md` Base picker).
     #[must_use]
     pub fn base_pick_available(&self) -> bool {
-        self.tab.is_file_tab() && self.scope == Scope::Branch && self.base.is_none()
+        self.tab.is_file_tab() && self.base.is_none()
     }
 
     /// Open the base picker: one row per branch name, the open PR's target starred first,
@@ -4508,6 +4510,9 @@ impl App {
         // landing fail the input match instead of reverting this one
         // (`crate::world::WorldInput`).
         self.base_epoch = self.base_epoch.wrapping_add(1);
+        // A pick takes the reviewer to the scope it configures, like the commit picker
+        // (`specs/input.md` Base picker).
+        self.scope = Scope::Branch;
         self.rebase_changes()?;
         self.reveal_files = true;
         Ok(())

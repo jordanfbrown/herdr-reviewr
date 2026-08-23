@@ -228,12 +228,12 @@ Row 1's primary and actions follow the cursor:
 | a live selection                        | `c comment`                   | `esc clear`                          |
 | a commented line                        | `e edit`                      | `d delete · n/N jump`                |
 | a fold                                  | `→ expand fold`               | `e edit file`                        |
-| a diff with no rows (binary, too large) | `u/b/t/g scope`               | `e edit file`                        |
+| a diff with no rows (binary, too large) | `b/t/g scope`                 | `e edit file`                        |
 | an open markdown preview                | `m source`                    | `e edit file`                        |
 | a file (file list)                      | `tab diff`                    | `e edit file · z hide`               |
 | a collapsed directory                   | `→ expand`                    | `z hide`                             |
 | an expanded directory                   | `← collapse`                  | `z hide`                             |
-| nothing to review (awaiting turn)       | `u/b/t/g scope`               | `r refresh`                          |
+| nothing to review (awaiting turn)       | `u/b/g scope`                 | `r refresh`                          |
 | the `branch` scope with no base         | `B base`                      | `u/t/g scope · r refresh`            |
 | a `gone` commit pick                    | `G commits`                   | `u/b/t scope · r refresh`            |
 | an empty read pane, navigator hidden    | `z show`                      | `tab files · e edit file`            |
@@ -305,7 +305,7 @@ Only the unmodified `enter` sends. `Alt+Enter` and `Shift+Enter` insert a newlin
 
 ### Base picker
 
-`base-pick` opens the picker over the body, like the comments list (`tui.md`). It works on the file tabs while the `branch` scope is active and no `--base` flag was passed. Elsewhere it is inert and stays out of the footer. While the comment editor is open, the base-name click is inert like the key. The picker still lists branches. It also opens when that list is empty, so a revision can be typed.
+`base-pick` opens the picker over the body, like the comments list (`tui.md`). It works on the file tabs in every scope while no `--base` flag was passed, and a pick switches to `branch`. With the flag, and off the file tabs, it is inert and stays out of the footer. Its title names the list, `base · 4 branches`. While the comment editor is open, the base-name click is inert like the key. The picker still lists branches. It also opens when that list is empty, so a revision can be typed.
 
 The list holds one row per branch name, remote-tracking and local names merged. The checked-out branch is not listed, unless it is the default branch, whose row must stay reachable to clear a pick. Rows sort by most recent commit. Two rows outrank that order:
 

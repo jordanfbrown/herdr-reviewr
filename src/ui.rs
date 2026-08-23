@@ -2478,7 +2478,8 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
     let hint = |action: K| app.keymap().hint(action).label();
     let (k, l): (String, &str) = match action {
         A::Comment => (hint(K::Comment), "comment"),
-        A::Select => (hint(K::Select), "select"),
+        // One word for one gesture: `v` marks a range end in the diff and the commit picker alike.
+        A::Select | A::CommitAnchor => (hint(K::Select), "select"),
         A::ClearSelection => ("esc".into(), "clear"),
         A::EditComment => (hint(K::Edit), "edit"),
         A::EditFile => (hint(K::Edit), "edit file"),
@@ -2532,15 +2533,10 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
             return ("enter".into(), if n > 1 { format!("open {n}") } else { "open".into() });
         }
         A::MoveCommitRow => (format!("{} {}", hint(K::Down), hint(K::Up)), "move"),
-        A::CommitAnchor => (hint(K::Select), "select"),
         A::CloseCommitPicker => {
             let anchored = app.commit_picker.as_ref().is_some_and(|cp| cp.anchor.is_some());
             ("esc".into(), if anchored { "clear" } else { "cancel" })
         }
-        A::PickBaseRow => ("enter".into(), "open"),
-        // Every printable is filter text in the base picker, so only the arrows move
-        // (`specs/input.md` Base picker).
-        A::MoveBaseRow => ("↑↓".into(), "move"),
         A::ScopeOther => {
             use crate::model::Scope;
             let others: Vec<String> = [
@@ -2558,15 +2554,17 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
         A::Search => (hint(K::Search), "search"),
         A::Find => (hint(K::Find), "find"),
         A::Wrap => (hint(K::Wrap), if app.wrap { "unwrap" } else { "wrap" }),
-        A::FindStep => ("↑↓".into(), "move"),
+        // The arrows move in the find band, the search screen, and the base picker, where
+        // every printable is query text (`specs/input.md`, `specs/search.md`, `specs/find-in-file.md`).
+        A::FindStep | A::MoveBaseRow | A::PickResult => ("↑↓".into(), "move"),
         A::FlipSearchMode => {
             // The label names the destination mode: `code` from Files, `files` from Code.
             let to_code =
                 app.search.as_ref().is_none_or(|s| s.search_mode == crate::app::SearchMode::Files);
             return ("tab".into(), if to_code { "code" } else { "files" }.into());
         }
-        A::PickResult => ("↑↓".into(), "move"),
-        A::OpenResult => ("enter".into(), "open"),
+        // `enter` opens the highlight in every list: a search result, a base, a commit run.
+        A::OpenResult | A::PickBaseRow => ("enter".into(), "open"),
         A::OpenPr => (hint(K::OpenPr), "open ↗"),
         A::Refresh => (hint(K::Refresh), "refresh"),
         A::Tabs => {
@@ -2997,7 +2995,7 @@ fn picker_trail(app: &App, row: &AgentChoice) -> String {
 fn picker_title(app: &App) -> String {
     let n = app.store.len();
     let noun = if n == 1 { "comment" } else { "comments" };
-    format!("Send {n} {noun} to")
+    format!("send {n} {noun} to")
 }
 
 fn picker_scroll(app: &App, rows: usize) -> usize {
@@ -3095,10 +3093,16 @@ fn base_picker_popup(area: Rect, app: &App) -> Rect {
         _ => None,
     };
     let widest = bp.rows.iter().chain(hit).map(base_row_width).max().unwrap_or(0);
-    menu_popup(area, app, widest, BASE_PICKER_TITLE, bp.rows.len().max(1) + 3)
+    menu_popup(area, app, widest, &base_picker_title(bp), bp.rows.len().max(1) + 3)
 }
 
-const BASE_PICKER_TITLE: &str = "Pick base branch";
+/// The base picker's title names its list, in the commit picker's register
+/// (`specs/input.md` Base picker).
+fn base_picker_title(bp: &crate::app::BasePicker) -> String {
+    let n = bp.rows.iter().filter(|r| matches!(r, crate::app::BaseChoice::Branch { .. })).count();
+    let noun = if n == 1 { "branch" } else { "branches" };
+    format!("base · {n} {noun}")
+}
 
 fn base_picker_scroll(bp: &crate::app::BasePicker, rows: usize) -> usize {
     menu_scroll(bp.cursor, bp.visible().len(), rows)
@@ -3112,7 +3116,7 @@ fn render_base_picker(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(p.purple))
-        .title(framed_title(BASE_PICKER_TITLE));
+        .title(framed_title(&base_picker_title(bp)));
     let inner = picker_inner(popup);
     frame.render_widget(block, popup);
     if inner.height == 0 {
