@@ -143,22 +143,18 @@ pub fn resolve(
         return Err(NoEditor::NamesNoProgram);
     };
     let mut args: Vec<String> = words.collect();
-    let Some(dialect) = dialect_for(&program) else {
-        args.push(file);
-        let wants_terminal = wants_terminal(&program, &args);
-        return Ok(EditorCommand { program, args, wants_terminal });
-    };
-    match dialect.line {
-        LineArg::Plus => {
+    match dialect_for(&program).map(|d| d.line) {
+        None => args.push(file),
+        Some(LineArg::Plus) => {
             args.push(format!("+{line}"));
             args.push(file);
         }
-        LineArg::Suffix => args.push(format!("{file}:{line}")),
-        LineArg::Goto => {
+        Some(LineArg::Suffix) => args.push(format!("{file}:{line}")),
+        Some(LineArg::Goto) => {
             args.push("-g".to_owned());
             args.push(format!("{file}:{line}"));
         }
-        LineArg::Flag => {
+        Some(LineArg::Flag) => {
             args.push("--line".to_owned());
             args.push(line.to_string());
             args.push(file);
