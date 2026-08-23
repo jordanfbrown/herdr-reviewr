@@ -582,12 +582,12 @@ fn a_hidden_navigator_gives_the_read_pane_the_whole_body() {
     app.toggle_keys();
     let out = render(&app);
     assert!(out.contains("z show"), "row 1 keeps the way back in the expansion");
-    assert!(!out.contains("p position"), "`p position` drops while hidden");
+    assert!(!out.contains("p layout"), "`p layout` drops while hidden");
 
     app.toggle_navigator_hidden();
     let out = render(&app);
     assert!(out.contains("z hide"), "visible, the `go` band lists the hide key");
-    assert!(out.contains("p position"), "`p position` returns with the navigator");
+    assert!(out.contains("p layout"), "`p layout` returns with the navigator");
 }
 
 #[test]
@@ -1459,12 +1459,12 @@ fn rebound_app(keybindings: &str) -> App {
 
 #[test]
 fn hints_show_the_first_bound_key() {
-    let app = rebound_app("comment = [\"ㅊ\", \"c\"]\ntab-pr = [\"g\"]\n");
+    let app = rebound_app("comment = [\"ㅊ\", \"c\"]\ntab-pr = [\"x\"]\n");
     let out = render(&app);
     let footer = footer_line(&out);
     // A wide hint key spans two buffer cells, so the dump carries a placeholder space after it.
     assert!(footer.contains("ㅊ  comment"), "the hint is the first bound key:\n{footer}");
-    assert!(out.contains("g PR"), "the header tab hint follows its binding:\n{out}");
+    assert!(out.contains("x PR"), "the header tab hint follows its binding:\n{out}");
     assert!(!out.contains("3 PR"), "the replaced digit is gone:\n{out}");
 }
 
@@ -2356,7 +2356,7 @@ mod search_screen_render {
         assert!(out.contains("… more"), "a clipped list marks that there is more");
         assert!(out.contains("─ results"), "the results pane carries a titled rule");
         assert!(out.contains("─ preview"), "the divider row carries the preview title");
-        assert!(out.contains("pick") && out.contains("open"), "the screen's footer shows");
+        assert!(out.contains("↑↓ move") && out.contains("enter open"), "the screen's footer shows");
 
         // Code mode: grouped rows under a header, `line:` locators, the clip.
         key(&mut app, KeyCode::Tab);
@@ -3004,7 +3004,7 @@ fn the_picker_titles_the_count_and_aligns_the_dim_trail_in_one_column() {
     let app = picker_app();
     let out = render(&app);
 
-    assert!(out.contains("Send 3 comments to"), "the title counts the comments:\n{out}");
+    assert!(out.contains("send 3 comments to"), "the title counts the comments:\n{out}");
 
     let rows: Vec<&str> = out
         .lines()
@@ -3139,7 +3139,7 @@ fn the_branch_header_names_the_base_and_its_click_opens_the_picker() {
     let keymap = app.keymap().clone();
     handle_mouse(&mut app, click, AREA, &[], &keymap, &herdr_reviewr::export::Clipboard).unwrap();
     let frame = render(&app);
-    assert!(frame.contains("Pick base"), "the click opens the picker popup");
+    assert!(frame.contains("base · 2 branches"), "the click opens the picker popup");
     assert!(frame.contains("dev"), "the sibling branch is a row");
     assert!(frame.contains("default"), "the default branch is marked");
 }
@@ -3359,7 +3359,7 @@ fn without_a_resolving_base_the_header_reads_no_base() {
     let frame = render(&app);
     let line0 = frame.lines().next().unwrap().to_string();
     assert!(line0.contains("[branch] no base"), "the empty state is named: {line0}");
-    assert!(frame.contains("pick base"), "the footer advertises the picker");
+    assert!(frame.contains("B base"), "the footer advertises the picker");
 }
 
 #[test]
@@ -3589,4 +3589,328 @@ fn the_text_selection_highlights_the_dragged_span() {
     assert_eq!(bg(inner.x + 5, inner.y + 2), Some(sel_bg));
     assert_eq!(bg(inner.x + 5 + 2, inner.y + 2), Some(sel_bg));
     assert_ne!(bg(inner.x + 5 + 4, inner.y + 2), Some(sel_bg));
+}
+
+// --- Commit picker and the commits header (specs/input.md, specs/tui.md) --------------------
+
+/// `main` with four commits, root first, plus an uncommitted edit. Returns the shas root
+/// first.
+fn commits_app() -> (Repo, App, Vec<String>) {
+    let r = Repo::init();
+    r.write("root.rs", "r\n");
+    r.commit_all("root");
+    r.write("one.rs", "1\n");
+    r.commit_all("one");
+    r.write("two.rs", "2\n");
+    r.commit_all("two");
+    r.write("three.rs", "3\n");
+    r.commit_all("Stop counting git's own lock files");
+    r.write("root.rs", "dirty\n");
+    let shas: Vec<String> =
+        r.git(&["rev-list", "--reverse", "HEAD"]).lines().map(str::to_string).collect();
+    let app = app_on(&r);
+    (r, app, shas)
+}
+
+fn short(sha: &str) -> &str {
+    &sha[..7]
+}
+
+#[test]
+fn the_commit_picker_paints_rows_a_run_bar_and_its_count() {
+    let (r, mut app, shas) = commits_app();
+    app.open_commit_picker();
+    app.commit_picker_anchor();
+    app.commit_picker_move(2);
+    let buf = render_buffer(&app);
+    let out = dump(&buf);
+    assert!(out.contains("commits · last 50"), "the title names the universe:\n{out}");
+    assert!(out.contains(short(&shas[3])), "a row leads with the sha:\n{out}");
+    assert!(out.contains("Stop counting git's own lock files"), "then the subject:\n{out}");
+    // The author sits in its own right-aligned column, the checked-out branch is not a ref.
+    let rows: Vec<&str> = out.lines().filter(|l| l.contains("  Test ")).collect();
+    assert_eq!(rows.len(), 4, "every row carries the author:\n{out}");
+    let ends: std::collections::HashSet<usize> =
+        rows.iter().map(|l| l[..l.find("  Test ").unwrap()].chars().count()).collect();
+    assert_eq!(ends.len(), 1, "the author column is one edge:\n{out}");
+    assert!(!out.contains("· main"), "the checked-out branch is never a ref:\n{out}");
+    let rows: Vec<&str> = out.lines().filter(|l| l.contains("▎")).collect();
+    assert_eq!(rows.len(), 3, "the run carries a bar:\n{out}");
+    assert!(
+        !out.lines().any(|l| l.contains("▎") && l.contains(short(&shas[0]))),
+        "the root is outside the run"
+    );
+    let footer = footer_line(&out);
+    assert!(footer.contains("enter open 3"), "the footer counts the run: {footer}");
+    assert!(footer.contains("v select") && footer.contains("esc clear"), "{footer}");
+    // The footer stays bright, the view behind recedes.
+    let plain = {
+        let mut a = app_on(&r);
+        a.focus = Focus::Files;
+        render_buffer(&a)
+    };
+    let x = (0..plain.area.width)
+        .find(|&x| {
+            plain
+                .cell((x, 0))
+                .is_some_and(|c| c.symbol().chars().all(char::is_alphanumeric) && c.symbol() != " ")
+        })
+        .expect("a lettered cell in the tab bar");
+    assert_ne!(
+        plain.cell((x, 0)).unwrap().fg,
+        buf.cell((x, 0)).unwrap().fg,
+        "the header is scrimmed"
+    );
+
+    // Without an anchor the hint is a plain `open` and `esc` cancels.
+    app.commit_picker_escape();
+    let footer = footer_line(&render(&app));
+    assert!(footer.contains("enter open") && !footer.contains("open 3"), "{footer}");
+    assert!(footer.contains("esc cancel"), "{footer}");
+    // A click on a row moves the highlight, a click on the highlight picks.
+    let row_y = (0..40u16)
+        .find(|&y| {
+            (0..140u16).any(|x| {
+                buf.cell((x, y)).is_some_and(|c| {
+                    c.symbol() == short(&shas[1]).chars().next().unwrap().to_string()
+                })
+            }) && dump(&buf).lines().nth(y as usize).is_some_and(|l| l.contains(short(&shas[1])))
+        })
+        .expect("the row for `one`");
+    let col = dump(&buf).lines().nth(row_y as usize).unwrap().find(short(&shas[1])).unwrap() as u16;
+    let hit = ui::hit_commit_picker_row(AREA, &app, col, row_y);
+    assert_eq!(hit, Some(2), "the row under the pointer");
+}
+
+#[test]
+fn the_commits_header_names_the_pick_and_its_verdict() {
+    let (r, mut app, shas) = commits_app();
+    app.open_commit_picker();
+    app.commit_picker_pick().unwrap();
+    let line0 = render(&app).lines().next().unwrap().to_string();
+    assert!(
+        line0
+            .contains(&format!("[commits] {} Stop counting git's own lock files", short(&shas[3]))),
+        "a run of one paints sha and subject: {line0}"
+    );
+    assert!(line0.contains("1 changed"), "{line0}");
+    // The pick name is clickable and opens the picker.
+    let cols: Vec<u16> = (0..AREA.width)
+        .filter(|&c| ui::hit_header(AREA, &app, app.keymap(), c, 0) == Some(HeaderHit::Pick))
+        .collect();
+    assert!(!cols.is_empty(), "the pick name is a header hit");
+    let footer = footer_line(&render(&app));
+    assert!(
+        !footer.contains("G commits"),
+        "row 1 never carries the picker key while picking works"
+    );
+    app.keys_expanded = true;
+    let expanded = render(&app);
+    assert!(expanded.contains("u/b/t/g scope"), "the go band names four scopes:\n{expanded}");
+    assert!(expanded.contains("G commits"), "and the picker key:\n{expanded}");
+    app.keys_expanded = false;
+
+    // A run paints `a..b (N)`.
+    app.open_commit_picker();
+    app.commit_picker_anchor();
+    app.commit_picker_move(2);
+    app.commit_picker_pick().unwrap();
+    let line0 = render(&app).lines().next().unwrap().to_string();
+    assert!(
+        line0.contains(&format!("[commits] {}..{} (3)", short(&shas[1]), short(&shas[3]))),
+        "a run paints its ends and count: {line0}"
+    );
+
+    // Truncation keeps the sha and the marker, the subject clips.
+    app.open_commit_picker();
+    app.commit_picker_escape(); // drop the restored anchor: a run of one again
+    app.commit_picker_pick().unwrap();
+    let narrow = render_at(&app, 72).lines().next().unwrap().to_string();
+    assert!(narrow.contains(short(&shas[3])), "the sha survives: {narrow}");
+    assert!(narrow.contains('…'), "the subject clips: {narrow}");
+
+    // Off branch: the marker follows the pick.
+    r.git(&["reset", "-q", "--hard", &shas[2]]);
+    r.write("three.rs", "again\n");
+    r.commit_all("three again");
+    common::land_world(&mut app);
+    let line0 = render(&app).lines().next().unwrap().to_string();
+    assert!(line0.contains("· off branch"), "{line0}");
+    let narrow = render_at(&app, 72).lines().next().unwrap().to_string();
+    assert!(narrow.contains("· off branch"), "the marker survives truncation: {narrow}");
+    // And the picker shows the pick as a row above the list.
+    app.open_commit_picker();
+    let out = render(&app);
+    let pick_line = out.lines().find(|l| l.contains("· off branch")).expect("the pick row");
+    assert!(pick_line.contains(short(&shas[3])), "{pick_line}");
+    app.close_commit_picker();
+
+    // Gone: both panes read the message, row 1 leads with the picker key.
+    r.git(&["reflog", "expire", "--expire=now", "--all"]);
+    r.git(&["gc", "-q", "--prune=now"]);
+    common::land_world(&mut app);
+    let out = render(&app);
+    let line0 = out.lines().next().unwrap().to_string();
+    assert!(line0.contains("· gone"), "{line0}");
+    assert_eq!(
+        out.matches(&format!("commit {} is gone", short(&shas[3]))).count(),
+        2,
+        "both panes:\n{out}"
+    );
+    let footer = footer_line(&out);
+    assert!(footer.trim_start().starts_with("G commits"), "{footer}");
+    assert!(footer.contains("u/b/t scope"), "the other three scopes: {footer}");
+}
+
+#[test]
+fn a_gone_run_paints_no_count_and_a_verdict_paints_only_in_commits() {
+    let (r, mut app, shas) = commits_app();
+    app.open_commit_picker();
+    app.commit_picker_anchor();
+    app.commit_picker_move(1);
+    app.commit_picker_pick().unwrap();
+    let line0 = render(&app).lines().next().unwrap().to_string();
+    assert!(line0.contains("(2)"), "{line0}");
+    // Rewrite the tip: the run is off branch, and the header says so in `commits` only.
+    r.git(&["reset", "-q", "--hard", &shas[1]]);
+    r.write("three.rs", "rewritten\n");
+    r.commit_all("three again");
+    common::land_world(&mut app);
+    assert!(render(&app).lines().next().unwrap().contains("· off branch"));
+    app.set_scope(Scope::Uncommitted).unwrap();
+    app.open_commit_picker();
+    let out = render(&app);
+    let pick_line = out.lines().find(|l| l.contains("..")).expect("the pick row");
+    assert!(pick_line.contains("(2)") && !pick_line.contains("off branch"), "{pick_line}");
+    app.close_commit_picker();
+    // Pruned: no count beside `· gone`.
+    app.set_scope(Scope::Commits).unwrap();
+    r.git(&["reflog", "expire", "--expire=now", "--all"]);
+    r.git(&["gc", "-q", "--prune=now"]);
+    common::land_world(&mut app);
+    let line0 = render(&app).lines().next().unwrap().to_string();
+    assert!(line0.contains("· gone") && !line0.contains("(0)"), "{line0}");
+}
+
+#[test]
+fn a_wide_glyph_author_keeps_the_age_column() {
+    let (r, mut app, _) = commits_app();
+    r.write("four.rs", "4\n");
+    r.git(&["add", "-A"]);
+    r.git(&["commit", "-q", "-m", "four", "--author=田中太郎 <t@example.com>"]);
+    app.open_commit_picker();
+    let out = render(&app);
+    let ages: Vec<usize> = out
+        .lines()
+        .skip(1)
+        .filter(|l| l.contains("  ") && (l.contains("Test") || l.contains("田")))
+        // The test backend dumps one char per cell, so a char index is a column.
+        .map(|l| {
+            let cells: Vec<char> = l.trim_end_matches([' ', '│']).chars().collect();
+            cells.iter().rposition(|c| *c == ' ').unwrap()
+        })
+        .collect();
+    assert!(out.contains("田"), "{out}");
+    assert!(ages.len() >= 2 && ages.iter().all(|&a| a == ages[0]), "ages align:\n{out}");
+}
+
+#[test]
+fn the_picker_trail_counts_comments_and_a_tall_list_says_more() {
+    let (r, mut app, shas) = commits_app();
+    // A comment on `two`.
+    app.open_commit_picker();
+    app.commit_picker_move(1);
+    app.commit_picker_pick().unwrap();
+    app.select_file(0).unwrap();
+    app.focus = Focus::Diff;
+    app.diff_cursor = app.diff.rows.iter().position(|r| r.marker() == '+').unwrap();
+    app.start_comment();
+    app.input_push('x');
+    app.submit_comment();
+    app.open_commit_picker();
+    let out = render(&app);
+    let two = out.lines().skip(1).find(|l| l.contains(&shas[2][..7])).unwrap();
+    assert!(two.contains("✎ 1"), "the commented commit counts its comments: {two}");
+    let three = out.lines().skip(1).find(|l| l.contains(&shas[3][..7])).unwrap();
+    assert!(!three.contains('✎'), "an uncommented one does not: {three}");
+    app.close_commit_picker();
+
+    // Forty more commits: a 12-row terminal clips the list and says so.
+    for i in 0..40 {
+        r.write("n.rs", &format!("{i}\n"));
+        r.commit_all(&format!("n{i}"));
+    }
+    app.open_commit_picker();
+    let buf = render_size(&app, 140, 12);
+    let out = dump(&buf);
+    let more = out.lines().find(|l| l.contains("… ")).expect("the clip line");
+    assert!(more.contains("more"), "{more}");
+    assert!(!out.contains(&shas[0][..7]), "the root is below the clip");
+    // The clip line is not a row: a click on it is inert.
+    let y = out.lines().position(|l| l.contains("… ")).unwrap() as u16;
+    let x = more.find('…').unwrap() as u16;
+    assert_eq!(ui::hit_commit_picker_row(Rect::new(0, 0, 140, 12), &app, x, y), None);
+}
+
+#[test]
+fn an_empty_universe_names_itself() {
+    let r = Repo::init();
+    let mut app = app_on(&r);
+    app.open_commit_picker();
+    assert_eq!(app.mode, Mode::CommitPick);
+    let out = render(&app);
+    assert!(out.contains("no commits yet"), "{out}");
+    let footer = footer_line(&out);
+    assert!(
+        footer.contains("esc cancel") && !footer.contains("enter"),
+        "only the exit offers: {footer}"
+    );
+    app.commit_picker_pick().unwrap();
+    assert_eq!(app.mode, Mode::CommitPick, "enter does nothing");
+    app.close_commit_picker();
+
+    // On the base branch itself the range is empty, so the universe is the last 50.
+    r.write("a.rs", "a\n");
+    r.commit_all("init");
+    r.set_origin_default("main", "main");
+    let mut app = app_on(&r);
+    app.open_commit_picker();
+    let out = render(&app);
+    assert!(out.contains("commits · last 50"), "{out}");
+    assert!(out.contains("init"), "{out}");
+}
+
+#[test]
+fn a_row_shows_one_ref_by_what_matters_most() {
+    let (r, mut app, shas) = commits_app();
+    r.set_origin_default("main", &shas[1]);
+    r.git(&["update-ref", "refs/remotes/origin/feature", &shas[3]]);
+    r.git(&["branch", "spike", &shas[3]]);
+    r.git(&["tag", "v1", &shas[3]]);
+    r.git(&["branch", "other", &shas[2]]);
+    app.open_commit_picker();
+    let out = render(&app);
+    let top = out.lines().skip(1).find(|l| l.contains(&shas[3][..7])).unwrap();
+    assert!(top.contains("origin/feature"), "a remote tip outranks a tag and a branch: {top}");
+    assert!(!top.contains("spike") && !top.contains("v1"), "one ref only: {top}");
+    let two = out.lines().skip(1).find(|l| l.contains(&shas[2][..7])).unwrap();
+    assert!(two.contains("other"), "a lone local branch shows: {two}");
+    app.close_commit_picker();
+    r.git(&["branch", "feat/two", &shas[2]]);
+    r.git(&["tag", "v0", &shas[2]]);
+    app.open_commit_picker();
+    let out = render(&app);
+    let two = out.lines().skip(1).find(|l| l.contains(&shas[2][..7])).unwrap();
+    assert!(two.contains("tag: v0") && !two.contains("feat/two"), "a slash is no remote: {two}");
+    app.close_commit_picker();
+
+    // The open PR's head outranks every ref.
+    app.pr = herdr_reviewr::forge::PrView::Pr(Box::new(herdr_reviewr::forge::PrSnapshot {
+        head_oid: shas[3].clone(),
+        ..common::pr_snapshot()
+    }));
+    app.open_commit_picker();
+    let out = render(&app);
+    let top = out.lines().skip(1).find(|l| l.contains(&shas[3][..7])).unwrap();
+    assert!(top.contains("  pr ") && !top.contains("origin/feature"), "{top}");
 }

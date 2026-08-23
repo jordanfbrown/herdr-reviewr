@@ -1794,6 +1794,26 @@ pub fn handle_key(app: &mut App, key: KeyEvent, area: Rect, keymap: &Keymap) -> 
         return Ok(());
     }
 
+    // The commit picker: the movement bindings and the page actions move the highlight, `v`
+    // (the `select` binding) sets the anchor, `enter` picks the run, `esc` clears the anchor
+    // else closes. Every other key is inert, so `q` cannot quit and `/` cannot search from
+    // inside it (`specs/input.md` Commit picker).
+    if app.mode == Mode::CommitPick {
+        match (action, key.code) {
+            (_, Esc) => app.commit_picker_escape(),
+            (_, Enter) => app.commit_picker_pick()?,
+            (Some(K::Down), _) => app.commit_picker_move(1),
+            (Some(K::Up), _) => app.commit_picker_move(-1),
+            (Some(K::PageDown), _) => app.commit_picker_move(PAGE),
+            (Some(K::PageUp), _) => app.commit_picker_move(-PAGE),
+            (Some(K::HalfDown), _) => app.commit_picker_move(HALF_PAGE),
+            (Some(K::HalfUp), _) => app.commit_picker_move(-HALF_PAGE),
+            (Some(K::Select), _) => app.commit_picker_anchor(),
+            _ => {}
+        }
+        return Ok(());
+    }
+
     // The read-only PR tab: navigate the snapshot and open links; authoring actions are inert.
     if app.tab == crate::app::Tab::Pr {
         match (action, key.code) {
@@ -1882,7 +1902,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent, area: Rect, keymap: &Keymap) -> 
             K::ScopeUncommitted => app.set_scope(Scope::Uncommitted)?,
             K::ScopeBranch => app.set_scope(Scope::Branch)?,
             K::ScopeLastTurn => app.set_scope(Scope::LastTurn)?,
+            K::ScopeCommits => app.set_scope(Scope::Commits)?,
             K::BasePick => app.open_base_picker(),
+            K::CommitPick => app.open_commit_picker(),
             K::Select => app.toggle_select(),
             K::Comment => app.start_comment(),
             // `edit`/`delete` act on the comment under the diff cursor, so they only fire with
@@ -2456,6 +2478,16 @@ pub fn handle_mouse(
                     None => {}
                 }
             }
+            // And in the commit picker, the run included (`specs/input.md` Commit picker).
+            MouseEventKind::Down(MouseButton::Left) if app.mode == Mode::CommitPick => {
+                match ui::hit_commit_picker_row(area, app, m.column, m.row) {
+                    Some(i) if app.commit_picker.as_ref().is_some_and(|cp| cp.cursor == i) => {
+                        app.commit_picker_pick()?;
+                    }
+                    Some(i) => app.commit_picker_goto(i),
+                    None => {}
+                }
+            }
             MouseEventKind::Drag(MouseButton::Left) if app.divider_drag_captured() => {
                 return Ok(());
             }
@@ -2557,10 +2589,11 @@ pub fn handle_mouse(
             if let Some(hit) = ui::hit_header(area, app, keymap, m.column, m.row) {
                 match hit {
                     ui::HeaderHit::Tab(tab) => app.set_tab(tab)?,
-                    ui::HeaderHit::Scope => app.set_scope(app.scope.cycle())?,
+                    ui::HeaderHit::Scope => app.set_scope(app.next_chip_scope())?,
                     // Inert when the picker cannot open here — with a `--base` flag the
                     // label names the base without offering a choice (`specs/input.md`).
                     ui::HeaderHit::Base => app.open_base_picker(),
+                    ui::HeaderHit::Pick => app.open_commit_picker(),
                 }
             } else if let Some(row) = ui::gutter_row_at(area, app, m.column, m.row) {
                 // The gutter owns mouse commenting: click a line or drag a range, and the

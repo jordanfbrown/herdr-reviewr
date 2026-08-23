@@ -847,3 +847,193 @@ fn list_ignored_dir_returns_immediate_children_only() {
     assert!(kids.iter().any(|e| e.path == "target/deep" && e.is_dir), "subdir as a placeholder");
     assert!(!kids.iter().any(|e| e.path == "target/deep/x.o"), "does not recurse past one level");
 }
+
+// --- commits scope (specs/review-model.md Commit pick) ---------------------------------------
+
+/// `main` with three commits over the root, each touching its own file, plus `feature`
+/// with one commit. Returns the shas of the four `main` commits, root first.
+fn run_repo() -> (Repo, Vec<String>) {
+    let r = Repo::init();
+    r.write("root.rs", "r\n");
+    r.commit_all("root");
+    r.write("one.rs", "1\n");
+    r.commit_all("one");
+    r.write("two.rs", "2\n");
+    r.write("root.rs", "r2\n");
+    r.commit_all("two");
+    r.write("three.rs", "3\n");
+    r.commit_all("three");
+    let log = r.git(&["rev-list", "--reverse", "HEAD"]);
+    let shas: Vec<String> = log.lines().map(str::to_string).collect();
+    (r, shas)
+}
+
+#[test]
+fn a_run_of_three_diffs_its_oldest_parent_against_its_newest() {
+    use herdr_reviewr::git::{changed_between, parent_or_empty};
+    let (r, shas) = run_repo();
+    // A dirty worktree and an untracked file stay out: both sides come from commits.
+    r.write("root.rs", "dirty\n");
+    r.write("untracked.rs", "u\n");
+    let old = parent_or_empty(r.path(), &shas[1]).unwrap();
+    assert_eq!(old, shas[0], "A^ is the root");
+    let files = changed_between(r.path(), &old, &shas[3]).unwrap();
+    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["one.rs", "root.rs", "three.rs", "two.rs"]);
+    let by = by_path(&files);
+    assert_eq!(by["one.rs"].kind, ChangeKind::Added);
+    assert_eq!(by["root.rs"].kind, ChangeKind::Modified);
+    assert_eq!((by["root.rs"].additions, by["root.rs"].deletions), (1, 1));
+
+    // A run of one is the commit alone.
+    let one =
+        changed_between(r.path(), &parent_or_empty(r.path(), &shas[2]).unwrap(), &shas[2]).unwrap();
+    let paths: Vec<&str> = one.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["root.rs", "two.rs"]);
+}
+
+#[test]
+fn a_root_commit_diffs_against_the_empty_tree() {
+    use herdr_reviewr::git::{EMPTY_TREE, changed_between, parent_or_empty, run_length};
+    let (r, shas) = run_repo();
+    let old = parent_or_empty(r.path(), &shas[0]).unwrap();
+    assert_eq!(old, EMPTY_TREE);
+    let files = changed_between(r.path(), &old, &shas[0]).unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "root.rs");
+    assert_eq!(files[0].kind, ChangeKind::Added);
+    assert_eq!(run_length(r.path(), &shas[0], &shas[3]), Some(4), "a run from the root counts");
+    assert_eq!(run_length(r.path(), &shas[1], &shas[3]), Some(3));
+    assert_eq!(run_length(r.path(), &shas[2], &shas[2]), Some(1));
+    assert_eq!(run_length(r.path(), &shas[3], &shas[1]), None, "a reversed run is no run");
+}
+
+#[test]
+fn a_merge_commit_contributes_its_tree_change() {
+    use herdr_reviewr::git::{CommitRef, changed_between, parent_or_empty};
+    let (r, shas) = run_repo();
+    r.git(&["checkout", "-q", "-b", "side", &shas[1]]);
+    r.write("side.rs", "s\n");
+    r.commit_all("side");
+    r.git(&["checkout", "-q", "main"]);
+    r.git(&["merge", "-q", "--no-ff", "-m", "merge side", "side"]);
+    let merge = r.git(&["rev-parse", "HEAD"]).trim().to_string();
+    // The merge alone, against its first parent: the side branch's file arrives.
+    let old = parent_or_empty(r.path(), &merge).unwrap();
+    assert_eq!(old, shas[3]);
+    let files = changed_between(r.path(), &old, &merge).unwrap();
+    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["side.rs"]);
+    // The row knows it is a merge, its author, and the refs pointing at it, by kind.
+    r.git(&["tag", "v1"]);
+    r.git(&["branch", "other", &shas[3]]);
+    r.git(&["update-ref", "refs/remotes/origin/main", &shas[2]]);
+    let rows = herdr_reviewr::git::list_commits(r.path(), None).unwrap();
+    assert!(rows[0].merge && !rows[1].merge);
+    assert_eq!(rows[0].author, "Test");
+    assert_eq!(rows[0].refs, [CommitRef::Tag("v1".into())], "HEAD and its branch are dropped");
+    assert_eq!(rows[1].refs, [CommitRef::Branch("other".into())]);
+    assert_eq!(rows[2].refs, [CommitRef::Remote("origin/main".into())]);
+    // The universe is the first-parent walk: the side branch's commit is behind the merge
+    // row, never a row of its own, so any contiguous run is one ancestor chain.
+    let subjects: Vec<&str> = rows.iter().map(|c| c.subject.as_str()).collect();
+    assert_eq!(subjects, ["merge side", "three", "two", "one", "root"]);
+}
+
+#[test]
+fn a_shallow_cut_is_gone_not_a_root() {
+    use herdr_reviewr::git::{EMPTY_TREE, commit_exists, parent_or_empty};
+    let (r, shas) = run_repo();
+    let shallow = tempfile::tempdir().unwrap();
+    let url = format!("file://{}", r.path().display());
+    let out = std::process::Command::new("git")
+        .args(["clone", "-q", "--depth", "1", &url, "w"])
+        .current_dir(shallow.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let w = shallow.path().join("w");
+    // `HEAD`'s parent is named by the commit object even though the clone lacks it, so the
+    // pick reads `gone` rather than diffing the whole tree against the empty tree.
+    let parent = parent_or_empty(&w, &shas[3]).unwrap();
+    assert_eq!(parent, shas[2]);
+    assert_ne!(parent, EMPTY_TREE);
+    assert!(!commit_exists(&w, &parent), "the cut parent is not in the clone");
+    assert_eq!(parent_or_empty(&w, &shas[0]), None, "the root itself is not in the clone");
+}
+
+#[test]
+fn a_rewritten_commit_still_diffs_and_a_pruned_one_is_missing() {
+    use herdr_reviewr::git::{
+        changed_between, commit_exists, is_reachable, list_commits, parent_or_empty,
+    };
+    let (r, shas) = run_repo();
+    assert!(is_reachable(r.path(), &shas[2]));
+    // Rewrite the tip: the old commits keep their objects but leave `HEAD`'s history.
+    r.git(&["reset", "-q", "--hard", &shas[1]]);
+    r.write("three.rs", "rewritten\n");
+    r.commit_all("three again");
+    assert!(commit_exists(r.path(), &shas[3]), "the rewritten commit is still an object");
+    assert!(!is_reachable(r.path(), &shas[3]), "but it is off branch");
+    let files =
+        changed_between(r.path(), &parent_or_empty(r.path(), &shas[3]).unwrap(), &shas[3]).unwrap();
+    assert_eq!(files[0].path, "three.rs", "an off-branch pick keeps diffing");
+
+    // Prune it: the pick is gone.
+    r.git(&["reflog", "expire", "--expire=now", "--all"]);
+    r.git(&["gc", "-q", "--prune=now"]);
+    assert!(!commit_exists(r.path(), &shas[3]));
+    assert!(parent_or_empty(r.path(), &shas[3]).is_none(), "a pruned sha has no parent");
+    assert!(!is_reachable(r.path(), &shas[3]));
+
+    // The universe lists what `HEAD` holds, newest first.
+    let rows = list_commits(r.path(), None).unwrap();
+    let subjects: Vec<&str> = rows.iter().map(|c| c.subject.as_str()).collect();
+    assert_eq!(subjects, ["three again", "one", "root"]);
+    assert!(rows.iter().all(|c| c.time > 0));
+}
+
+#[test]
+fn the_universe_is_the_branch_over_its_base_or_the_last_fifty() {
+    use herdr_reviewr::git::list_commits;
+    let (r, shas) = run_repo();
+    r.set_origin_default("main", &shas[1]);
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.write("f.rs", "f\n");
+    r.commit_all("feature");
+    let base = resolve_base(r.path(), None).unwrap().status.winner.unwrap();
+    let over = list_commits(r.path(), Some(base.oid())).unwrap();
+    let subjects: Vec<&str> = over.iter().map(|c| c.subject.as_str()).collect();
+    assert_eq!(subjects, ["feature", "three", "two"], "merge-base..HEAD over origin/main at `one`");
+    let all = list_commits(r.path(), None).unwrap();
+    assert_eq!(all.len(), 5, "without a base, everything reachable up to 50");
+    assert_eq!(all[0].subject, "feature");
+    assert_eq!(all[4].sha, shas[0]);
+
+    let empty = Repo::init();
+    assert!(list_commits(empty.path(), None).unwrap().is_empty(), "an unborn repo lists nothing");
+}
+
+#[test]
+fn the_commit_scope_writes_nothing() {
+    use herdr_reviewr::git::{changed_between, list_commits, parent_or_empty, run_length};
+    let (r, shas) = run_repo();
+    r.write("root.rs", "dirty\n");
+    let before = (
+        r.git(&["for-each-ref"]),
+        r.git(&["status", "--porcelain"]),
+        r.git(&["rev-parse", "HEAD"]),
+        r.git(&["write-tree"]),
+    );
+    let old = parent_or_empty(r.path(), &shas[1]).unwrap();
+    changed_between(r.path(), &old, &shas[3]).unwrap();
+    list_commits(r.path(), None).unwrap();
+    run_length(r.path(), &shas[1], &shas[3]);
+    let after = (
+        r.git(&["for-each-ref"]),
+        r.git(&["status", "--porcelain"]),
+        r.git(&["rev-parse", "HEAD"]),
+        r.git(&["write-tree"]),
+    );
+    assert_eq!(before, after, "no ref, index, worktree, or HEAD change");
+}

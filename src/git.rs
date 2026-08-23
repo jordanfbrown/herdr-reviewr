@@ -1198,7 +1198,7 @@ pub fn write_baseline_ref(repo: &Path, key: &str, sha: &str) -> Result<()> {
 }
 
 /// git's well-known empty-tree object, used as the diff base when a repo has no commits.
-const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// `HEAD` when the repo has a commit, else the empty tree (a commitless repo has no HEAD).
 fn diff_base(repo: &Path) -> String {
@@ -1234,7 +1234,8 @@ pub fn changed_files(
             ),
             None => return Ok(Vec::new()),
         },
-        Scope::LastTurn => return Ok(Vec::new()),
+        // `last-turn` and `commits` diff through their own entry points.
+        Scope::LastTurn | Scope::Commits => return Ok(Vec::new()),
     };
     // Branch diffs against the worktree, so like uncommitted it carries untracked files
     // that `git diff` never reports.
@@ -1253,6 +1254,174 @@ pub fn changed_against_tree(repo: &Path, tree: &str) -> Result<Vec<ChangedFile>>
     let numstat = git(repo, &["diff", tree, &current, "--numstat", "-z"])?;
     let name_status = git(repo, &["diff", tree, &current, "--name-status", "-z"])?;
     assemble(repo, &numstat, &name_status, false)
+}
+
+/// The changed files between two commits, `old` against `new`, for the `commits` scope:
+/// both sides are committed trees, so no untracked pass runs (specs/review-model.md
+/// Commit pick). `old` may be the empty tree for a root commit.
+pub fn changed_between(repo: &Path, old: &str, new: &str) -> Result<Vec<ChangedFile>> {
+    let numstat = git(repo, &["diff", old, new, "--numstat", "-z"])?;
+    let name_status = git(repo, &["diff", old, new, "--name-status", "-z"])?;
+    assemble(repo, &numstat, &name_status, false)
+}
+
+/// `sha`'s first parent, or the empty tree when `sha` is a root commit: the old side of a
+/// run whose oldest commit is `sha` (specs/review-model.md Commit pick). `None` when the
+/// commit itself is missing. The parent is read from the raw commit object, so a parent the
+/// repository lacks (a shallow clone's cut) is named, not mistaken for a root: the caller's
+/// existence check then reports it `gone`.
+pub fn parent_or_empty(repo: &Path, sha: &str) -> Option<String> {
+    let object = git(repo, &["cat-file", "-p", &format!("{sha}^{{commit}}")]).ok()?;
+    let parent = object
+        .lines()
+        .take_while(|l| !l.is_empty())
+        .find_map(|l| l.strip_prefix("parent "))
+        .map_or(EMPTY_TREE, str::trim);
+    Some(parent.to_string())
+}
+
+/// The commit `HEAD` names, or `None` in an unborn repository. The commit picker's universe
+/// is keyed by it, so a poll re-lists only when it moved (specs/input.md Commit picker).
+pub fn head_oid(repo: &Path) -> Option<String> {
+    git_line(repo, &["rev-parse", "--verify", "-q", "HEAD"])
+}
+
+/// `sha`'s subject line, for the header paint (specs/tui.md).
+pub fn commit_subject(repo: &Path, sha: &str) -> Option<String> {
+    git_line(repo, &["log", "-1", "--format=%s", sha])
+}
+
+/// Whether `sha` names a commit the repository still holds (specs/review-model.md `gone`).
+pub fn commit_exists(repo: &Path, sha: &str) -> bool {
+    git_ok(repo, &["cat-file", "-e", &format!("{sha}^{{commit}}")])
+}
+
+/// Whether `sha` is reachable from `HEAD` (specs/review-model.md `off branch`). A missing
+/// commit is unreachable.
+pub fn is_reachable(repo: &Path, sha: &str) -> bool {
+    git_ok(repo, &["merge-base", "--is-ancestor", sha, "HEAD"])
+}
+
+/// How many commits `oldest..=newest` spans along the first-parent walk from `newest`
+/// (`specs/tui.md`). `None` when either end is missing, or `oldest` is not behind `newest`.
+pub fn run_length(repo: &Path, oldest: &str, newest: &str) -> Option<usize> {
+    let old = parent_or_empty(repo, oldest)?;
+    run_length_from(repo, &old, oldest, newest)
+}
+
+/// [`run_length`] with `oldest`'s parent already resolved, so a build that has it spawns
+/// nothing twice.
+pub fn run_length_from(repo: &Path, old: &str, oldest: &str, newest: &str) -> Option<usize> {
+    if oldest == newest {
+        return Some(1);
+    }
+    let mut args = vec!["rev-list", "--count", "--first-parent", newest];
+    let exclude;
+    if old != EMPTY_TREE {
+        if !git_ok(repo, &["merge-base", "--is-ancestor", oldest, newest]) {
+            return None;
+        }
+        exclude = format!("^{old}");
+        args.push(&exclude);
+    }
+    git_line(repo, &args)?.parse().ok()
+}
+
+/// One row of the commit picker (specs/input.md Commit picker): the full id, the subject,
+/// the committer time as unix seconds, the author, the refs pointing at it, and whether it
+/// is a merge.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CommitRow {
+    pub sha: String,
+    pub subject: String,
+    pub time: u64,
+    pub author: String,
+    /// The refs pointing at the commit, `HEAD` and the checked-out branch dropped.
+    pub refs: Vec<CommitRef>,
+    pub merge: bool,
+}
+
+/// A ref a picker row can show, by kind, so the row's one ref ranks by what it is rather
+/// than by how it is spelled (specs/input.md Commit picker).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum CommitRef {
+    /// A remote-tracking tip, shown as `origin/feature`.
+    Remote(String),
+    /// A tag, shown as `tag: v1`.
+    Tag(String),
+    /// A local branch other than the one checked out, shown by name.
+    Branch(String),
+}
+
+impl CommitRef {
+    pub fn label(&self) -> String {
+        match self {
+            Self::Remote(r) | Self::Branch(r) => r.clone(),
+            Self::Tag(t) => format!("tag: {t}"),
+        }
+    }
+}
+
+/// The picker's universe, newest first, along the first-parent walk from `HEAD`:
+/// `merge_base..HEAD` when the base has one, or the last 50 commits without (specs/review-
+/// model.md Commit pick). First-parent only, so any contiguous run of rows is one ancestor
+/// chain and diffs as `A^..B`. An unborn repository lists nothing.
+pub fn list_commits(repo: &Path, merge_base: Option<&str>) -> Result<Vec<CommitRow>> {
+    if head_oid(repo).is_none() {
+        return Ok(Vec::new());
+    }
+    let range = merge_base.map(|mb| format!("{mb}..HEAD"));
+    let mut args = vec![
+        "log",
+        "--first-parent",
+        "--decorate=full",
+        "--format=%H%x00%s%x00%ct%x00%an%x00%D%x00%P",
+        "-z",
+    ];
+    match &range {
+        Some(r) => args.push(r),
+        None => args.extend(["-50", "HEAD"]),
+    }
+    let out = git(repo, &args)?;
+    Ok(parse_commit_log(&out))
+}
+
+/// Parse `git log --format=%H%x00%s%x00%ct%x00%an%x00%D%x00%P -z` output: six NUL-separated
+/// fields per commit, commits themselves NUL-terminated.
+fn parse_commit_log(out: &str) -> Vec<CommitRow> {
+    let fields: Vec<&str> = out.split('\0').collect();
+    fields
+        .chunks(6)
+        .filter(|c| c.len() == 6 && !c[0].is_empty())
+        .map(|c| CommitRow {
+            sha: c[0].to_string(),
+            subject: c[1].to_string(),
+            time: c[2].trim().parse().unwrap_or(0),
+            author: c[3].to_string(),
+            refs: parse_decorations(c[4]),
+            merge: c[5].split_whitespace().count() > 1,
+        })
+        .collect()
+}
+
+/// `%D` under `--decorate=full` as typed refs: `HEAD -> refs/heads/feature,
+/// refs/remotes/origin/feature, tag: refs/tags/v1` becomes `Remote("origin/feature")`,
+/// `Tag("v1")`. `HEAD` and the branch it is on are dropped, since the top row is `HEAD` by
+/// construction and its branch is the one being reviewed.
+fn parse_decorations(d: &str) -> Vec<CommitRef> {
+    d.split(", ")
+        .map(str::trim)
+        .filter(|r| !r.is_empty() && *r != "HEAD" && !r.starts_with("HEAD -> "))
+        .filter_map(|r| {
+            if let Some(t) = r.strip_prefix("tag: refs/tags/") {
+                Some(CommitRef::Tag(t.to_string()))
+            } else if let Some(t) = r.strip_prefix("refs/remotes/") {
+                Some(CommitRef::Remote(t.to_string()))
+            } else {
+                r.strip_prefix("refs/heads/").map(|b| CommitRef::Branch(b.to_string()))
+            }
+        })
+        .collect()
 }
 
 /// One entry in the `All files` worktree listing: a path plus whether git ignores it and

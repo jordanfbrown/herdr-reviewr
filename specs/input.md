@@ -1,7 +1,7 @@
 ---
 Status: Current
 Created: 2026-07-17
-Last edited: 2026-08-22
+Last edited: 2026-08-23
 ---
 
 # Input
@@ -16,49 +16,51 @@ The keymap is rebindable per action through `[keybindings]` in the plugin config
 
 - The `action` column names the action for `[keybindings]`.
 - The keys shown are defaults: a bare character, a named key, or a `ctrl+`/`alt+` chord (`config.md`).
-- `tab`, `esc`, and `enter` are structural. They are fixed and never rebind.
+- `tab`, `esc`, and `enter` are structural. They are fixed and never rebind. `esc` acts with or without a modifier, everywhere it acts.
 - A key hint in the header or the footer shows its action's first bound key.
 - A named key spells as its name in the config and paints as its screen label: `←`, `→`, `↑`, `↓`, `PageUp`, `PageDown`.
 - The comments list acts through the same bindings and closes on `esc` and the `comments` binding.
 - The agent picker acts through the `down` / `up` bindings and closes on `esc`.
 - The base picker filters through a text field with the comment editor's controls, moves through the arrows, and closes on `esc`. Its keys are fixed like every text field's, whatever `down` / `up` are bound to.
+- The commit picker acts through the `down` / `up` / `select` bindings and the four page actions. `esc` clears its anchor, else closes it.
 - Prose and mockups elsewhere show the default keys.
 
-| action                                                   | does                                        | keys                                        | mouse                                          |
-| -------------------------------------------------------- | ------------------------------------------- | ------------------------------------------- | ---------------------------------------------- |
-| `down` / `up`                                            | move the cursor in the focused pane         | `j` / `k` / `↓` / `↑`                       | click a row                                    |
-| `next-hunk` / `prev-hunk`                                | jump to the next / previous hunk            | `]` / `[`                                   | —                                              |
-| `next-file` / `prev-file`                                | jump to the next / previous file            | `f` / `F`                                   | —                                              |
-| `collapse` / `expand`                                    | collapse / expand, else scroll sideways     | `←` / `→`                                   | click the directory or `⋯` row                 |
-| —                                                        | switch focus between list and diff          | `tab`                                       | click a pane                                   |
-| `page-up` / `page-down`                                  | move a page                                 | `PageUp` / `PageDown`                       | —                                              |
-| `half-up` / `half-down`                                  | move a half page                            | `ctrl+u` / `ctrl+d`                         | —                                              |
-| —                                                        | scroll the viewport, selection put          | —                                           | wheel over the pane                            |
-| `scope-uncommitted` / `scope-branch` / `scope-last-turn` | switch scope                                | `u` / `b` / `t`                             | click the scope chip to cycle                  |
-| `base-pick`                                              | open the base picker                        | `B`                                         | click the base name                            |
-| `tab-changes` / `tab-all-files` / `tab-pr`               | switch tab                                  | `1` / `2` / `3`                             | click a tab name                               |
-| —                                                        | open a link in rendered markdown            | —                                           | click the link                                 |
-| `wrap`                                                   | toggle line wrap                            | `w`                                         | —                                              |
-| `preview`                                                | toggle the markdown preview                 | `m`                                         | —                                              |
-| `navigator-position`                                     | move the navigator clockwise                | `p`                                         | —                                              |
-| `navigator-hide`                                         | hide / show the navigator                   | `z`                                         | —                                              |
-| `navigator-grow` / `navigator-shrink`                    | grow / shrink the navigator                 | `<` / `>`                                   | drag the divider                               |
-| `select`                                                 | select a line range, removed lines included | `v` then move                               | —                                              |
-| —                                                        | clear the selection                         | `esc`                                       | —                                              |
-| `comment`                                                | comment on the selection                    | `c`, type, `enter`                          | click or drag the gutter                       |
-| —                                                        | copy text (`text-selection.md`)             | —                                           | drag over text                                 |
-| `edit`                                                   | edit the comment, else open the file        | `e`                                         | —                                              |
-| `delete`                                                 | delete the comment under the cursor         | `d`                                         | —                                              |
-| `next-comment` / `prev-comment`                          | jump to next / previous comment             | `n` / `N`                                   | —                                              |
-| `comments`                                               | list and manage all comments                | `l`                                         | —                                              |
-| `search`                                                 | open the search screen (`search.md`)        | `/`                                         | —                                              |
-| `find`                                                   | open in-file find (`find-in-file.md`)       | `ctrl+f`                                    | —                                              |
-| `keys`                                                   | toggle the footer's full shortcut list      | `?`                                         | —                                              |
-| `send`                                                   | send all comments to the agent              | `s` / `S`                                   | —                                              |
-| `copy`                                                   | copy all comments to the clipboard          | `y` / `Y`                                   | —                                              |
-| `open-pr`                                                | open the PR in the browser (`pr-tab.md`)    | `o`                                         | click the status chip                          |
-| `refresh`                                                | refresh now                                 | `r`                                         | —                                              |
-| `quit`                                                   | quit                                        | `q`                                         | —                                              |
+| action                                                                     | does                                        | keys                  | mouse                          |
+| -------------------------------------------------------------------------- | ------------------------------------------- | --------------------- | ------------------------------ |
+| `down` / `up`                                                              | move the cursor in the focused pane         | `j` / `k` / `↓` / `↑` | click a row                    |
+| `next-hunk` / `prev-hunk`                                                  | jump to the next / previous hunk            | `]` / `[`             | —                              |
+| `next-file` / `prev-file`                                                  | jump to the next / previous file            | `f` / `F`             | —                              |
+| `collapse` / `expand`                                                      | collapse / expand, else scroll sideways     | `←` / `→`             | click the directory or `⋯` row |
+| —                                                                          | switch focus between list and diff          | `tab`                 | click a pane                   |
+| `page-up` / `page-down`                                                    | move a page                                 | `PageUp` / `PageDown` | —                              |
+| `half-up` / `half-down`                                                    | move a half page                            | `ctrl+u` / `ctrl+d`   | —                              |
+| —                                                                          | scroll the viewport, selection put          | —                     | wheel over the pane            |
+| `scope-uncommitted` / `scope-branch` / `scope-last-turn` / `scope-commits` | switch scope                                | `u` / `b` / `t` / `g` | click the scope chip to cycle  |
+| `base-pick`                                                                | open the base picker                        | `B`                   | click the base name            |
+| `commit-pick`                                                              | open the commit picker                      | `G`                   | click the pick name            |
+| `tab-changes` / `tab-all-files` / `tab-pr`                                 | switch tab                                  | `1` / `2` / `3`       | click a tab name               |
+| —                                                                          | open a link in rendered markdown            | —                     | click the link                 |
+| `wrap`                                                                     | toggle line wrap                            | `w`                   | —                              |
+| `preview`                                                                  | toggle the markdown preview                 | `m`                   | —                              |
+| `navigator-position`                                                       | move the navigator clockwise                | `p`                   | —                              |
+| `navigator-hide`                                                           | hide / show the navigator                   | `z`                   | —                              |
+| `navigator-grow` / `navigator-shrink`                                      | grow / shrink the navigator                 | `<` / `>`             | drag the divider               |
+| `select`                                                                   | select a line range, removed lines included | `v` then move         | —                              |
+| —                                                                          | clear the selection                         | `esc`                 | —                              |
+| `comment`                                                                  | comment on the selection                    | `c`, type, `enter`    | click or drag the gutter       |
+| —                                                                          | copy text (`text-selection.md`)             | —                     | drag over text                 |
+| `edit`                                                                     | edit the comment, else open the file        | `e`                   | —                              |
+| `delete`                                                                   | delete the comment under the cursor         | `d`                   | —                              |
+| `next-comment` / `prev-comment`                                            | jump to next / previous comment             | `n` / `N`             | —                              |
+| `comments`                                                                 | list and manage all comments                | `l`                   | —                              |
+| `search`                                                                   | open the search screen (`search.md`)        | `/`                   | —                              |
+| `find`                                                                     | open in-file find (`find-in-file.md`)       | `ctrl+f`              | —                              |
+| `keys`                                                                     | toggle the footer's full shortcut list      | `?`                   | —                              |
+| `send`                                                                     | send all comments to the agent              | `s` / `S`             | —                              |
+| `copy`                                                                     | copy all comments to the clipboard          | `y` / `Y`             | —                              |
+| `open-pr`                                                                  | open the PR in the browser (`pr-tab.md`)    | `o`                   | click the status chip          |
+| `refresh`                                                                  | refresh now                                 | `r`                   | —                              |
+| `quit`                                                                     | quit                                        | `q`                   | —                              |
 
 `navigator-position` cycles `right` → `bottom` → `left` → `top` → `right`.
 
@@ -66,7 +68,7 @@ The keymap is rebindable per action through `[keybindings]` in the plugin config
 
 `navigator-hide` hides the navigator and shows it again in place (`tui.md`). On the file tabs it is never inert in `Normal` mode, so the way back is always the key that hid it. On `PR` it is inert and stays out of the footer (`tui.md`). While the navigator is hidden, `navigator-position`, `navigator-grow`, and `navigator-shrink` are inert. In `Normal` mode, `tab` then shows the navigator and focuses it. Every other mode keeps its own `tab` meaning (`search.md`).
 
-Outside the hidden-state rules above, these four navigator actions work from either main pane on every tab. While the comment editor is open, their printable characters are text. In the comments list, the agent picker, and the base picker they are inert. Those local modes omit the navigator actions from the footer.
+Outside the hidden-state rules above, these four navigator actions work from either main pane on every tab. While the comment editor is open, their printable characters are text. In the comments list, the agent picker, the base picker, and the commit picker they are inert. Those local modes omit the navigator actions from the footer.
 
 A divider drag belongs to the navigator position and split axis at mouse-down. A keypress, terminal resize, or config-driven layout change cancels it. A cancelled drag keeps its last painted share, and the cancelling keypress still performs its own action. After cancellation, drag events are consumed until mouse-up rather than becoming a selection in the read pane.
 
@@ -97,7 +99,7 @@ The steps and the skips share the rest:
 - Adjacency is the list's visible order, so a collapsed subtree is skipped.
 - Opening a file this way moves the list selection onto it.
 - With no target in the pressed direction, a press does nothing.
-- Both are inert while a line selection is live and while the comments list, the agent picker, or the base picker is open.
+- Both are inert while a line selection is live and while the comments list, the agent picker, the base picker, or the commit picker is open.
 - The `PR` tab has neither.
 
 ### Expand and collapse
@@ -117,20 +119,21 @@ nothing.
 The following table is every state `edit` can be pressed in. A state it does not name is a
 state nobody decided.
 
-| cursor on                                  | `edit` opens                                     |
-| ------------------------------------------ | ------------------------------------------------ |
-| a commented line, card on screen           | that comment, for editing                        |
-| any other read-pane line                   | the open file at that line                       |
-| a deletion or a fold                       | the open file at the nearest numbered line above |
-| a markdown preview                         | the open file at line 1                          |
-| a diff with no rows                        | the open file at line 1                          |
-| a file row in the navigator                | that file at line 1                              |
-| a directory row                            | nothing                                          |
-| a live line selection on the diff          | nothing                                          |
-| the comments list                          | the highlighted comment, for editing             |
-| the comment editor, find band, or a picker | nothing, the key is theirs                       |
-| the search screen                          | nothing, the key types into the query            |
-| the `PR` tab                               | nothing, it names no file                        |
+| cursor on                                  | `edit` opens                                                                |
+| ------------------------------------------ | --------------------------------------------------------------------------- |
+| a commented line, card on screen           | that comment, for editing                                                   |
+| any other read-pane line                   | the open file at that line                                                  |
+| a deletion or a fold                       | the open file at the nearest numbered line above                            |
+| a markdown preview                         | the open file at line 1                                                     |
+| a `commits` diff                           | the open file at line 1, its numbers are the commit's                       |
+| a diff with no rows                        | the open file at line 1                                                     |
+| a file row in the navigator                | that file at line 1                                                         |
+| a directory row                            | nothing                                                                     |
+| a live line selection on the diff          | nothing                                                                     |
+| the comments list                          | the highlighted comment, when the active scope reads its diff, else nothing |
+| the comment editor, find band, or a picker | nothing, the key is theirs                                                  |
+| the search screen                          | nothing, the key types into the query                                       |
+| the `PR` tab                               | nothing, it names no file                                                   |
 
 The footer offers `e edit file` exactly on the rows that open a file, and never elsewhere. Whether the file is still on disk is the press's question, not the footer's.
 
@@ -171,8 +174,9 @@ right of the `do` row.
 
 ```
  do    e edit · d delete · n/N jump · s send 2                                ?
- go    u/b/t scope · / search · ctrl+f find · w wrap · l list · y copy · r refresh · 1·2·3 tabs
-       tab files · p position · z hide · q quit
+ go    u/b/t/g scope · B base · G commits · / search · ctrl+f find · w wrap · l comments · y copy
+       r refresh · 1·2·3 tabs
+       tab files · p layout · z hide · q quit
  move  j k · ] [ hunk · f F file · PageUp PageDown
 ```
 
@@ -199,7 +203,7 @@ The `?` expansion:
 
 - It lists every shortcut applicable in the current context that is not already on row 1, wrapped
   below row 1 in three labeled bands, each a dim label then its keys. `do`: the cursor's actions.
-  `go`: the global actions, each shown only where it works — scope, the base picker, search, find,
+  `go`: the global actions, each shown only where it works — scope, the base picker, the commit picker, search, find,
   wrap, the comments list, copy, refresh, the tabs, the pane toggle, the navigator position and hide
   keys, quit. `move`:
   down and up, the hunk and file steps, the page keys. An empty band is dropped, and a key that would
@@ -226,13 +230,14 @@ Row 1's primary and actions follow the cursor:
 | a live selection                        | `c comment`                   | `esc clear`                          |
 | a commented line                        | `e edit`                      | `d delete · n/N jump`                |
 | a fold                                  | `→ expand fold`               | `e edit file`                        |
-| a diff with no rows (binary, too large) | `u/b/t scope`                 | `e edit file`                        |
+| a diff with no rows (binary, too large) | `b/t/g scope`                 | `e edit file`                        |
 | an open markdown preview                | `m source`                    | `e edit file`                        |
 | a file (file list)                      | `tab diff`                    | `e edit file · z hide`               |
 | a collapsed directory                   | `→ expand`                    | `z hide`                             |
 | an expanded directory                   | `← collapse`                  | `z hide`                             |
-| nothing to review (awaiting turn)       | `u/b/t scope`                 | `r refresh`                          |
-| the `branch` scope with no base         | `B pick base`                 | `u/t scope · r refresh`              |
+| nothing to review (awaiting turn)       | `u/b/g scope`                 | `r refresh`                          |
+| the `branch` scope with no base         | `B base`                      | `u/t/g scope · r refresh`            |
+| a `gone` commit pick (`Changes`)        | `G commits`                   | `u/b/t scope · r refresh`            |
 | an empty read pane, navigator hidden    | `z show`                      | `tab files · e edit file`            |
 
 - An armed crossing outranks the cursor's own action and leads row 1, since only the footer says the next press leaves the file. It is the one movement key on row 1 (see Changeset traversal). While it is armed, the `move` band drops the hunk step, whose key row 1 now shows.
@@ -240,8 +245,8 @@ Row 1's primary and actions follow the cursor:
 - When the awaiting-turn state and the hidden empty read pane match at once, the awaiting-turn row wins, and `z show` still joins its actions.
 - `scope`, `search`, and `find` are global, not cursor actions, so the `go` band carries them, never row 1 — `search` in every context, `find` wherever the read pane has content (`search.md`, `find-in-file.md`). `scope` leads row 1 only where nothing else does, an empty or notice diff.
 - Movement keys never sit on row 1. The `move` band shows them.
-- The comment editor, the comments list, the agent picker, the base picker, the search screen, and the find band show their own one-row footer, without `?`. The expansion's open state is kept and restored when they close.
-- `?` (the `keys` action) toggles the expansion in `Normal` mode only. It is text in the comment editor, the search and find inputs, and the base picker's filter, and inert in the comments list and the agent picker.
+- The comment editor, the comments list, the agent picker, the base picker, the commit picker, the search screen, and the find band show their own one-row footer, without `?`. The expansion's open state is kept and restored when they close.
+- `?` (the `keys` action) toggles the expansion in `Normal` mode only. It is text in the comment editor, the search and find inputs, and the base picker's filter, and inert in the comments list, the agent picker, and the commit picker.
 - The changed-file count and line totals live in the header. The footer carries only the comment count, inside `s send N`.
 - On `PR` row 1 carries the PR state line and `o open ↗` per `pr-tab.md`, and `?` expands to the rest.
 
@@ -297,13 +302,12 @@ Only the unmodified `enter` sends. `Alt+Enter` and `Shift+Enter` insert a newlin
 
 - A click moves the highlight to the clicked row. A click on the highlighted row sends. The highlight is armed when the picker opens, so a first click on the armed row sends immediately. Every other gesture is inert, and none reaches the view behind.
 - The digits are literal here, whatever `tab-changes` and its siblings are bound to. A modified digit moves nothing.
-- `esc` cancels with or without a modifier, so no keystroke traps the reviewer in the picker.
 - A picker taller than the pane scrolls with the highlight.
 - `esc` returns to the view the send was issued from, the comments list and the find band included.
 
 ### Base picker
 
-`base-pick` opens the picker over the body, like the comments list (`tui.md`). It works on the file tabs while the `branch` scope is active and no `--base` flag was passed. Elsewhere it is inert and stays out of the footer. While the comment editor is open, the base-name click is inert like the key. The picker still lists branches. It also opens when that list is empty, so a revision can be typed.
+`base-pick` opens the picker over the body, like the comments list (`tui.md`). It works on the file tabs in every scope while no `--base` flag was passed, and a pick switches to `branch`. With the flag, and off the file tabs, it is inert and stays out of the footer. Its title names the list, `base · 4 branches`. While the comment editor is open, the base-name click is inert like the key. The picker still lists branches. It also opens when that list is empty, so a revision can be typed.
 
 The list holds one row per branch name, remote-tracking and local names merged. The checked-out branch is not listed, unless it is the default branch, whose row must stay reachable to clear a pick. Rows sort by most recent commit. Two rows outrank that order:
 
@@ -333,6 +337,59 @@ The filter is a text field with the comment editor's controls, above. `↑` and 
 - An empty query with no rows shows `type a revision`, and `enter` does nothing.
 - A pick applies immediately: the changeset rebuilds and the header renames (`review-model.md`).
 - A picker taller than the pane scrolls with the highlight.
+
+### Commit picker
+
+`commit-pick` opens the picker over the body, like the base picker (`tui.md`). It works on the file tabs in every scope. Elsewhere it is inert and stays out of the footer. It is inert while the comment editor, the comments list, another picker, the search screen, or the find band is open, and the pick-name click with it.
+
+`scope-commits` with a pick switches straight to it. With no pick, or a `gone` pick, it opens the picker without switching scope, so `esc` leaves the previous scope active. The scope chip cycles `uncommitted`, `branch`, `last-turn`, `commits`, and skips `commits` while there is no pick or the pick is `gone`, so a click never parks on the picker.
+
+The list holds one row per commit in the universe, newest first (`review-model.md`). A row reads `sha  subject  trail  author  age`. The subject is the one bright part. The trail is dim and `·`-joined, and it clips after the subject. The author is right-aligned to one column before the age, so the names scan as a column. The title names the universe: `commits · 6 over main`, or `commits · last 50` when no base resolves, there is no merge-base, or the merge-base is `HEAD`. The header names the pick only in `commits`. The pick row paints it everywhere, without a verdict, since no other scope's build checks one. A pick that is not wholly in the list, `off branch` or below the base, is one row above the list, reading the pick as the header paints it.
+
+The trail carries, in this order:
+
+| token          | when                                                                 |
+| -------------- | -------------------------------------------------------------------- |
+| `✎ N`          | N comments in the store were made on a pick whose newest commit is this one |
+| `merge`        | the commit has two or more parents                                   |
+| one ref        | the first of: `pr` when the open PR's head is this commit (`forge-host.md`), a remote-tracking tip, a `tag: …`, another local branch |
+
+`HEAD` and the checked-out branch are never shown: the top row is `HEAD`, and its branch is the one under review. One ref per row, because `pr`, the remote tip, and the branch usually name the same commit, and the reviewer wants the strongest fact, not the list.
+
+A list row is identified by its sha, the pick row by its pick. A poll that moved `HEAD` refreshes the list under the open picker and reconciles the highlight and the anchor by that identity, each falling back to the nearest surviving row (`overview.md`). A poll that left `HEAD` alone keeps the rows as they are.
+
+The highlight opens on the current pick's newest commit, else the first row. A run of two or more reopens with its anchor on the oldest commit, so `enter` without moving re-picks the same run, and a move resizes it. A run of one reopens with no anchor, so `k` then `enter` steps to the next commit. The highlight and the anchor are place state (`overview.md`).
+
+```
+┌ commits · 6 over main ───────────────────────────────────────────────────────┐
+│   1a2b3c4  Stop counting git's own lock files                    dmitry  2m │
+│ ▎ a49ed7b  Release v0.35.0  pr                                   dmitry  3h │  ← highlighted, filled row
+│ ▎ 372cbbc  Fix what the verification found  ✎ 2                  claude  5h │
+│ ▎ 1a11436  Fix the end-to-end review findings                    claude  6h │
+│   896626a  Cut README detail  tag: v0.34.0                       dmitry  1d │
+│   ba82015  Add the commit scope spec                             dmitry  1d │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+| key                   | does                                                                  |
+| --------------------- | --------------------------------------------------------------------- |
+| `j` / `k` / `↓` / `↑` | move the highlight, clamped at the ends                               |
+| `PageUp` / `PageDown` | move the highlight a page                                             |
+| `ctrl+u` / `ctrl+d`   | move the highlight a half page                                        |
+| `v`                   | set the anchor on the highlighted row, or clear it when set there     |
+| `enter`               | pick the run from the anchor to the highlight, or the highlight alone |
+| `esc`                 | clear the anchor, else cancel                                         |
+
+Every other key is inert. `enter` and `esc` act with or without a modifier: nothing here is a send, so the chord guard the agent picker needs has no job.
+
+- The anchor may sit above or below the highlight. The run is the rows between them, inclusive.
+- The rows from the anchor to the highlight carry a bar.
+- The footer's `enter` hint counts a run of two or more, and `esc` reads `clear` with an anchor set, `cancel` without.
+- The pick row takes no anchor and sits outside every run. `v` on it is inert and the footer does not offer it. `enter` on it re-picks the same pick.
+- A click moves the highlight. A click on the highlighted row picks, the run included. Every other gesture is inert, and none reaches the view behind.
+- An unborn repository shows `no commits yet`. `enter` does nothing, and the footer offers `esc` alone.
+- A pick applies immediately: the scope switches to `commits`, the changeset rebuilds, and the header renames (`review-model.md`).
+- A picker taller than the pane scrolls with the highlight, and its last line reads `… N more` while rows remain below, like the search screen's clip (`search.md`). A click on that line is inert.
 
 ## Non-goals
 

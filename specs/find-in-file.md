@@ -1,7 +1,7 @@
 ---
 Status: Current
 Created: 2026-07-20
-Last edited: 2026-08-19
+Last edited: 2026-08-23
 ---
 
 # Find in file
@@ -29,7 +29,7 @@ Literal search within the open file in the read pane, opened with `ctrl+f`: ever
 - The query is the search input's field: the comment editor's controls, newlines excluded, a paste's newlines flattened to spaces (`input.md`, `search.md`).
 - An empty query shows a dim placeholder, lights nothing, and leaves the count blank.
 - While the band is open it owns the keymap. Every printable key is query text, so the review keys (`n`, `u`, `1`, …) lose their review action. Only the steps and `esc` act. Every other key is inert.
-- The find key is inert while composing a comment, in the comments list, and in the agent picker (`input.md`).
+- The find key is inert while composing a comment, in the comments list, the agent picker, the base picker, and the commit picker (`input.md`).
 
 ## Matching
 
@@ -83,7 +83,7 @@ While the band is open, polls keep running underneath (`overview.md`).
 | `↑`           | step to the previous match |
 | `esc`         | close, the cursor stays    |
 
-The band shows its own one-row footer, `↑↓ match` and `esc`, the arrows combined like the search screen's pick (`search.md`). In the review, `ctrl+f find` sits in the footer's `go` band wherever the band would open (`input.md`).
+The band shows its own one-row footer, `↑↓ move` and `esc`, the arrows combined like the search screen's (`search.md`). In the review, `ctrl+f find` sits in the footer's `go` band wherever the band would open (`input.md`).
 
 ## Non-goals
 

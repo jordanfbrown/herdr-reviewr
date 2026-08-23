@@ -14,7 +14,6 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -1256,29 +1255,11 @@ pub(crate) fn is_named_bot(name: &str) -> bool {
     is_bot(name) || name.to_ascii_lowercase().ends_with("-bot")
 }
 
-/// A relative age label (`5m`, `2h`, `3d`, `2w`) from an ISO-8601 `…Z` timestamp, against `now`.
-/// `now` is injected so the formatting is testable; the UI passes `SystemTime::now()`.
-#[must_use]
-pub fn relative_age(created_at: &str, now: SystemTime) -> String {
-    let Some(then) = parse_iso(created_at) else {
-        return String::new();
-    };
-    let now = now.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
-    let secs = (now - then).max(0);
-    match secs {
-        s if s < 60 => format!("{s}s"),
-        s if s < 3600 => format!("{}m", s / 60),
-        s if s < 86_400 => format!("{}h", s / 3600),
-        s if s < 604_800 => format!("{}d", s / 86_400),
-        s => format!("{}w", s / 604_800),
-    }
-}
-
 /// Parse a fixed `YYYY-MM-DDTHH:MM:SSZ` timestamp to a Unix epoch second. `None` on any
 /// deviation, so a malformed value yields an empty age rather than a wrong one.
 // The civil-from-days algorithm reads naturally with the conventional short field names.
 #[allow(clippy::many_single_char_names)]
-fn parse_iso(s: &str) -> Option<i64> {
+pub(crate) fn parse_iso(s: &str) -> Option<i64> {
     let b = s.as_bytes();
     if b.len() < 20
         || b[4] != b'-'
@@ -1720,18 +1701,6 @@ mod tests {
         dedup_bot_prose(&mut out);
         let bodies: Vec<_> = out.iter().map(|c| c.body.as_str()).collect();
         assert_eq!(bodies, ["approved", "new prose"]);
-    }
-
-    #[test]
-    fn relative_age_buckets_by_magnitude() {
-        // now = 2026-06-27T12:00:00Z
-        let now = UNIX_EPOCH
-            + std::time::Duration::from_secs(parse_iso("2026-06-27T12:00:00Z").unwrap() as u64);
-        assert_eq!(relative_age("2026-06-27T11:55:00Z", now), "5m");
-        assert_eq!(relative_age("2026-06-27T10:00:00Z", now), "2h");
-        assert_eq!(relative_age("2026-06-24T12:00:00Z", now), "3d");
-        assert_eq!(relative_age("2026-06-13T12:00:00Z", now), "2w");
-        assert_eq!(relative_age("garbage", now), "");
     }
 
     #[test]

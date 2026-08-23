@@ -1,7 +1,7 @@
 ---
 Status: Current
 Created: 2026-06-23
-Last edited: 2026-08-19
+Last edited: 2026-08-23
 ---
 
 # Review model
@@ -20,6 +20,7 @@ The central object is a comment: a note on a run of diff lines in one file, carr
 | `end`   | last line of the range, equal to `start` for a single line       |
 | `lines` | the verbatim diff lines, each keeping its `+`/`-`/space marker   |
 | `text`  | free-form reviewer text, possibly multi-line                     |
+| `rev`   | the diff it was made on: `worktree`, or the picked run               |
 
 Every field is required.
 
@@ -36,6 +37,7 @@ A scope selects which changes `Changes` shows and which files `All files` annota
 | `uncommitted` | staged and unstaged changes vs `HEAD`, plus untracked files   |
 | `branch`      | everything the branch carries over its base, committed or not |
 | `last-turn`   | every change in the worktree's last change-producing turn     |
+| `commits`     | one commit, or a contiguous run of commits, picked by hand    |
 
 ### Base branch
 
@@ -70,6 +72,28 @@ Open decision: whether a name that exists both locally and on origin should reso
 
 The installed pane passes no arguments, so `--base` serves standalone and dev runs.
 
+### Commit pick
+
+The `commits` scope diffs a picked run of commits, oldest `A` to newest `B`, as `A^` against `B`. Both sides come from the commits, never the worktree, so the scope lists no untracked file and shows no uncommitted edit. The pick is made in the commit picker (`input.md`).
+
+- The pick is two commit ids.
+- A pane starts with no pick, and the scope is never entered without one (`input.md`).
+- A pick is replaced, never cleared.
+- A merge commit in the run contributes its tree change like any other commit.
+- A run whose oldest commit is a root commit diffs against the empty tree.
+- A pick is `off branch` once any of its commits is unreachable from `HEAD`. It keeps painting, and the header marks it (`tui.md`). A base change never marks a pick.
+- A pick is `gone` once the repository has pruned any commit it needs, `A^` included. A shallow clone's cut counts as pruned. The scope is then empty, the header marks it, and the footer offers the picker (`input.md`).
+- The pick's `off branch` and `gone` verdicts land with the changeset they head, from one build (`tui.md`).
+- A re-pick rebuilds the changeset on the next frame, never waiting for a poll.
+- `All files` marks the files the run touched. Its tree still lists the worktree, so a file the run added and a later commit removed has no row.
+
+The picker's universe is the branch over its base, along the first-parent walk from `HEAD`, so any contiguous run of rows is one ancestor chain. A side branch's commits sit behind their merge row, never as rows of their own.
+
+| base                                  | commits listed                                   |
+| ------------------------------------- | ------------------------------------------------ |
+| resolves, merge-base behind `HEAD`    | `merge-base..HEAD`, newest first                 |
+| none, no merge-base, or `HEAD` itself | the last 50 reachable from `HEAD`, newest first  |
+
 ### Ignored paths
 
 Every scope respects `.gitignore`. To review an ignored file, track it. This gates `Changes` only: `All files` lists every file, ignored dimmed (`file-list.md`).
@@ -103,9 +127,9 @@ The selected file's structured diff, built from its old and new content (`diff-v
 
 ### File content
 
-In `All files` a comment anchors to plain file content instead of a diff. Its `side` is `new`, its range is line numbers in the current file, and its snippet lines are space-prefixed like context lines. It exports identically to a diff comment.
+In `All files` a comment anchors to plain file content instead of a diff. Its `side` is `new`, its `rev` is `worktree`, its range is line numbers in the current file, and its snippet lines are space-prefixed like context lines. It exports identically to a diff comment.
 
-A comment renders and is acted on only in the view it belongs to: a content comment in `All files`, a diff comment in `Changes`. Send, Copy, and the comments list carry the whole set across both tabs.
+A comment renders and is acted on only in the view it belongs to: a content comment in `All files`, a diff comment in `Changes`. A diff comment renders only while the active scope reads the diff named by its `rev`, so a comment on a run's diff never lands on a worktree line, nor on another run's, and a worktree comment renders under every worktree scope. Send, Copy, and the comments list carry the whole set across both tabs and every scope.
 
 ## Behavior
 
@@ -162,6 +186,11 @@ How the agent pane is found and filled is in `herdr-host.md`.
 - No line-number rebasing as the diff shifts.
 - No auto-submit of the agent prompt.
 - No inferred base branch. The reflog and the commit graph never choose a base.
+- No non-contiguous commit pick. Two commits with a gap between them are two passes.
+- No worktree end in a `commits` run. From-a-commit-to-now is `branch` with a base pick.
+- No persisted commit pick. A pick is a reading position, not a repository fact.
+- No commit in the export header. The snippet anchors the comment in every scope.
+- No text filter in the commit picker. The universe is one branch, and the bare keys go to the gesture.
 - No global base list. A base is chosen per repository, never once for every repository.
 - No conversion of a named revision to a SHA at pick time. A SHA is a pin because that is what was named.
 

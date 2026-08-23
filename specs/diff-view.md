@@ -1,7 +1,7 @@
 ---
 Status: Current
 Created: 2026-06-24
-Last edited: 2026-08-19
+Last edited: 2026-08-23
 ---
 
 # Diff view
@@ -61,7 +61,7 @@ You can select content rows for comments in the file tabs. You cannot select a `
 
 ### The model
 
-- Old content comes from `git show`. New content comes from the worktree. In the `branch` scope, new content comes from `git show`. An `untracked` file has empty old content. A `deleted` file has empty new content.
+- Old content comes from `git show`. New content comes from the worktree in `uncommitted`, `branch`, and `last-turn`. In the `commits` scope, old content comes from `A^` and new content from `B`, both through `git show` (`review-model.md`). An `untracked` file has empty old content. A `deleted` file has empty new content.
 - Changes go into hunks. The context margin is 3 unchanged lines.
 - The full file has highlight. Each hunk does not have its own highlight. A string or a comment that spans many lines has the correct color inside a hunk.
 - The language comes from the path. A path that is not known shows as plain.

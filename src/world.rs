@@ -15,7 +15,7 @@ use crate::app::Tab;
 use crate::file_list::{Annotation, Entry};
 use crate::git;
 use crate::herdr::AgentSample;
-use crate::model::{ChangedFile, Scope};
+use crate::model::{ChangedFile, CommitPick, Scope};
 use crate::turn::{TurnTracker, WorktreeState};
 
 /// Everything the build reads. A landed snapshot reconciles only while the view still
@@ -36,6 +36,9 @@ pub struct WorldInput {
     pub base_epoch: u64,
     /// The `last-turn` baseline tree the changed set diffs against; `None` before a turn.
     pub turn_baseline: Option<String>,
+    /// The `commits` scope's pick. Part of the identity, so a build for a replaced pick
+    /// fails the landing gate instead of painting the old run (specs/review-model.md).
+    pub commit_pick: Option<CommitPick>,
     /// Expanded ignored directories whose children the `All files` tree loads.
     pub toggled_dirs: HashSet<String>,
 }
@@ -48,6 +51,41 @@ pub struct WorldSnapshot {
     pub changed: HashMap<String, Annotation>,
     pub entries: Vec<Entry>,
     pub branch_base: git::BaseStatus,
+    /// The `commits` scope's pick verdict, from the same build as the changeset it heads
+    /// (specs/review-model.md Commit pick). `None` on every other scope.
+    pub pick_status: Option<PickStatus>,
+    /// The commit `HEAD` named when the build ran, the commit picker's universe key
+    /// (specs/input.md Commit picker). `None` in an unborn repository.
+    pub head: Option<String>,
+}
+
+/// What one build found the commit pick to be (specs/review-model.md Commit pick).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum PickVerdict {
+    /// Every commit reachable from `HEAD`.
+    Live,
+    /// Some commit unreachable from `HEAD`. The run still paints.
+    OffBranch,
+    /// A needed commit is pruned, named here. The scope is empty.
+    Gone(String),
+}
+
+/// The pick's verdict and the newest commit's subject, for the header (specs/tui.md).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PickStatus {
+    pub verdict: PickVerdict,
+    pub subject: String,
+    /// How many commits the run spans, `0` when `gone` or not a run.
+    pub count: usize,
+}
+
+/// The scope-dependent half of a build: the changeset and the base or pick it diffs against,
+/// landed together so the header and the list never disagree (specs/tui.md).
+#[derive(Debug)]
+pub struct ScopeBuild {
+    pub branch_base: git::BaseStatus,
+    pub pick_status: Option<PickStatus>,
+    pub changed: Vec<ChangedFile>,
 }
 
 /// Build the snapshot for `input`. The changeset is computed regardless of tab so the
@@ -62,9 +100,12 @@ pub fn build(input: &WorldInput) -> Result<WorldSnapshot> {
             changed: HashMap::new(),
             entries: Vec::new(),
             branch_base: git::BaseStatus::default(),
+            pick_status: None,
+            head: None,
         });
     }
-    let (branch_base, changed) = build_changed(input)?;
+    let ScopeBuild { branch_base, pick_status, changed } = build_changed(input)?;
+    let head = git::head_oid(&input.repo);
     let changed_map = annotate(&changed);
     let entries = match input.tab {
         // The whole worktree (ignored included), with expanded ignored dirs loaded lazily.
@@ -72,23 +113,27 @@ pub fn build(input: &WorldInput) -> Result<WorldSnapshot> {
         // `Changes` (the `PR` tab never builds a snapshot).
         _ => changed.iter().map(Entry::from_changed).collect(),
     };
-    Ok(WorldSnapshot { changed: changed_map, entries, branch_base })
+    Ok(WorldSnapshot { changed: changed_map, entries, branch_base, pick_status, head })
 }
 
 /// The active scope's changed files and, on the `branch` scope, the base they diff against —
 /// the piece a scope switch rebuilds before its frame, so the header count and list never
 /// wear another scope's label (specs/tui.md).
-pub fn build_changed(input: &WorldInput) -> Result<(git::BaseStatus, Vec<ChangedFile>)> {
-    let none = git::BaseStatus::default;
+pub fn build_changed(input: &WorldInput) -> Result<ScopeBuild> {
+    let plain = |changed| ScopeBuild {
+        branch_base: git::BaseStatus::default(),
+        pick_status: None,
+        changed,
+    };
     if !git::is_repo(&input.repo) {
-        return Ok((none(), Vec::new()));
+        return Ok(plain(Vec::new()));
     }
     match input.scope {
         Scope::LastTurn => match input.turn_baseline.as_deref() {
-            Some(t) => Ok((none(), git::changed_against_tree(&input.repo, t)?)),
-            None => Ok((none(), Vec::new())),
+            Some(t) => Ok(plain(git::changed_against_tree(&input.repo, t)?)),
+            None => Ok(plain(Vec::new())),
         },
-        Scope::Uncommitted => Ok((none(), git::changed_files(&input.repo, input.scope, None)?)),
+        Scope::Uncommitted => Ok(plain(git::changed_files(&input.repo, input.scope, None)?)),
         Scope::Branch => {
             // A resolve failure fails the build whole, so the landing keeps the stale
             // frame and reports — degrading to an empty snapshot would blank a populated
@@ -98,9 +143,55 @@ pub fn build_changed(input: &WorldInput) -> Result<(git::BaseStatus, Vec<Changed
                 .map_err(|e| anyhow::anyhow!("{}", e.0))?;
             let base_oid = resolution.status.winner.as_ref().map(|w| w.oid().to_string());
             let changed = git::changed_files(&input.repo, input.scope, base_oid.as_deref())?;
-            Ok((resolution.status, changed))
+            Ok(ScopeBuild { branch_base: resolution.status, pick_status: None, changed })
+        }
+        Scope::Commits => {
+            // The scope is never entered without a pick (specs/input.md); a tag without one
+            // builds the empty changeset rather than failing the landing.
+            let Some(pick) = &input.commit_pick else { return Ok(plain(Vec::new())) };
+            let (status, changed) = build_pick(&input.repo, pick)?;
+            Ok(ScopeBuild {
+                branch_base: git::BaseStatus::default(),
+                pick_status: Some(status),
+                changed,
+            })
         }
     }
+}
+
+/// The pick's changeset and verdict in one pass (specs/review-model.md Commit pick): `gone`
+/// once any needed commit, `A^` included, is pruned, else `off branch` once any is
+/// unreachable from `HEAD`, else live. A `gone` pick has an empty changeset.
+fn build_pick(repo: &Path, pick: &CommitPick) -> Result<(PickStatus, Vec<ChangedFile>)> {
+    let gone = |sha: &str| {
+        (
+            PickStatus {
+                verdict: PickVerdict::Gone(sha.to_string()),
+                subject: String::new(),
+                count: 0,
+            },
+            Vec::new(),
+        )
+    };
+    if !git::commit_exists(repo, &pick.newest) {
+        return Ok(gone(&pick.newest));
+    }
+    let Some(old) = git::parent_or_empty(repo, &pick.oldest) else {
+        return Ok(gone(&pick.oldest));
+    };
+    if old != git::EMPTY_TREE && !git::commit_exists(repo, &old) {
+        return Ok(gone(&old));
+    }
+    let subject = git::commit_subject(repo, &pick.newest).unwrap_or_default();
+    let count = git::run_length_from(repo, &old, &pick.oldest, &pick.newest).unwrap_or(0);
+    let changed = git::changed_between(repo, &old, &pick.newest)?;
+    // The oldest is an ancestor of the newest, so one reachability check covers the run.
+    let verdict = if git::is_reachable(repo, &pick.newest) {
+        PickVerdict::Live
+    } else {
+        PickVerdict::OffBranch
+    };
+    Ok((PickStatus { verdict, subject, count }, changed))
 }
 
 /// The changed-files map every consumer keys by path — one construction site, shared by

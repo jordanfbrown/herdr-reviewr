@@ -7,6 +7,7 @@
 //! live in `app.rs`.
 
 use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
@@ -83,6 +84,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         Mode::List => Some(render_comments_list),
         Mode::Picker => Some(render_agent_picker),
         Mode::BasePick => Some(render_base_picker),
+        Mode::CommitPick => Some(render_commit_picker),
         Mode::Normal | Mode::Composing { .. } | Mode::Search | Mode::Find => None,
     };
     if let Some(render_popup) = popup {
@@ -1261,6 +1263,8 @@ pub enum HeaderHit {
     Scope,
     /// The `branch` scope's base label; the click opens the base picker (`specs/tui.md`).
     Base,
+    /// The `commits` scope's pick name; the click opens the commit picker (`specs/tui.md`).
+    Pick,
 }
 
 /// Which header control a click at `(col, row)` lands on, if any. `keymap` must be the keymap
@@ -1287,7 +1291,11 @@ pub fn hit_header(area: Rect, app: &App, keymap: &Keymap, col: u16, row: u16) ->
         let base_start = scope_end + BASE_GAP.len() as u16;
         let base_end = base_start + (lead.width() + name.width() + tail.width()) as u16;
         if (base_start..base_end).contains(&col) {
-            return Some(HeaderHit::Base);
+            return Some(if app.scope == crate::model::Scope::Commits {
+                HeaderHit::Pick
+            } else {
+                HeaderHit::Base
+            });
         }
     }
     None
@@ -1348,6 +1356,9 @@ fn scope_chip(app: &App) -> String {
 /// The `branch` scope's base label as `(lead, shown, marker, tail)` (`specs/tui.md`).
 /// `shown` is the spelling or a SHA-once abbrev. `marker` is ` (sha)` for a named rev.
 fn base_label(app: &App) -> Option<(String, String, String, String)> {
+    if app.scope == crate::model::Scope::Commits {
+        return pick_label(app);
+    }
     if app.scope != crate::model::Scope::Branch {
         return None;
     }
@@ -1367,6 +1378,37 @@ fn base_label(app: &App) -> Option<(String, String, String, String)> {
     })
 }
 
+/// The `commits` scope's pick label in `base_label`'s shape (`specs/tui.md`): a run of one
+/// reads `1a2b3c4 <subject>`, a longer run `896626a..a49ed7b (N)`, and the verdict rides the
+/// tail as ` · off branch` or ` · gone`. The lead is empty: the chip already says `commits`.
+/// The sha and the marker survive truncation; the subject clips.
+fn pick_label(app: &App) -> Option<(String, String, String, String)> {
+    use crate::world::PickVerdict;
+    let pick = app.commit_pick.as_ref()?;
+    let status = app.pick_status.as_ref();
+    // The verdict is current only while `commits` is showing: every other scope's build
+    // carries none, so the picker's pick row elsewhere paints the pick and what is fixed
+    // by its shas (subject, count), never a verdict the world may have moved past.
+    let verdict = status.map(|s| &s.verdict).filter(|_| app.scope == crate::model::Scope::Commits);
+    let gone = app.pick_gone();
+    let tail = match verdict {
+        Some(PickVerdict::OffBranch) => " · off branch".to_string(),
+        Some(PickVerdict::Gone(_)) => " · gone".to_string(),
+        Some(PickVerdict::Live) | None => String::new(),
+    };
+    let shown = if pick.is_single() {
+        git::abbreviate_oid(&pick.newest)
+    } else {
+        format!("{}..{}", git::abbreviate_oid(&pick.oldest), git::abbreviate_oid(&pick.newest))
+    };
+    let marker = match status {
+        Some(s) if pick.is_single() && !s.subject.is_empty() => format!(" {}", s.subject),
+        _ if pick.is_single() || gone => String::new(),
+        _ => format!(" ({})", status.map_or(0, |s| s.count)),
+    };
+    Some((String::new(), shown, marker, tail))
+}
+
 /// The base label as painted: truncated with a trailing `…` to what the header can fit,
 /// the name first and the skipped tail only in what remains, so a long missing name can
 /// never evict the resolved base (`specs/tui.md`) — one source for the paint and the
@@ -1383,7 +1425,17 @@ fn base_parts(app: &App, keymap: &Keymap, width: u16) -> Option<(String, String,
         + 1;
     let budget = (width as usize).saturating_sub(fixed);
     let marker_w = marker.width();
-    let name = if marker_w > 0 && budget > marker_w {
+    let name = if app.scope == crate::model::Scope::Commits {
+        // The sha is the identity and the subject is the marker, so the subject clips
+        // first and the sha stays whole. The verdict tail is reserved before the subject,
+        // so `· gone` can never be the part that falls off (`specs/tui.md`).
+        let tail_w = tail.width();
+        if budget > shown.width() + tail_w {
+            format!("{shown}{}", truncate_width(&marker, budget - shown.width() - tail_w))
+        } else {
+            truncate_width(&shown, budget.saturating_sub(tail_w))
+        }
+    } else if marker_w > 0 && budget > marker_w {
         format!("{}{marker}", truncate_width(&shown, budget - marker_w))
     } else {
         truncate_width(&format!("{shown}{marker}"), budget)
@@ -1454,9 +1506,11 @@ fn render_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
     let mut spans = tab_bar_spans(app);
     spans.push(Span::styled(chip, bar.fg(p.yellow).add_modifier(Modifier::BOLD)));
     if let Some((lead, name, tail)) = base {
-        // An empty lead is the `no base` state, worn as a warning; a resolved name wears the
-        // clickable accent, and the skipped tail warns beside it (`specs/tui.md`).
-        let warn = lead.is_empty();
+        // An empty lead is the `no base` state, worn as a warning, except in `commits`,
+        // whose pick label always leaves the lead empty and is never a warning. A resolved
+        // name wears the clickable accent, and the skipped tail warns beside it
+        // (`specs/tui.md`).
+        let warn = lead.is_empty() && app.scope != crate::model::Scope::Commits;
         spans.push(Span::styled(BASE_GAP, bar));
         spans.push(Span::styled(lead, bar.fg(p.dim2)));
         spans.push(Span::styled(name, bar.fg(if warn { p.orange } else { p.blue })));
@@ -1485,9 +1539,11 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block, area);
 
     if app.file_rows.is_empty() {
+        let gone = app.commits_gone_message();
         let msg = match app.tab {
             Tab::AllFiles => "no files",
             Tab::Changes if app.awaiting_turn() => app.turn_wait_message(),
+            Tab::Changes if app.commits_gone() => gone.as_str(),
             _ => "no changes",
         };
         frame.render_widget(dim_paragraph(msg, p), inner);
@@ -1766,6 +1822,7 @@ fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
     if app.visible.is_empty() {
         // `All files` is a content browser, not a diff, so its empty/notice copy avoids diff
         // vocabulary and never shows the last-turn "waiting" state.
+        let gone = app.commits_gone_message();
         let msg = match app.tab {
             Tab::AllFiles => match app.diff.state {
                 FileState::Binary => "binary — no line comments",
@@ -1774,6 +1831,7 @@ fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
                 FileState::Normal => "select a file to read",
             },
             Tab::Changes if app.awaiting_turn() => app.turn_wait_message(),
+            Tab::Changes if app.commits_gone() => gone.as_str(),
             _ => match app.diff.state {
                 FileState::Binary => "binary — no line comments",
                 FileState::TooLarge => "file too large to diff",
@@ -2355,8 +2413,49 @@ fn render_composer(frame: &mut Frame, app: &App, area: Rect) {
     anchor_input_cursor(frame, inner, cursor_col, cursor_row - scroll);
 }
 
+/// A relative age label (`5m`, `2h`, `3d`, `2w`) from an ISO-8601 `…Z` timestamp, against `now`.
+/// `now` is injected so the formatting is testable; the UI passes `SystemTime::now()`.
+#[must_use]
+pub fn relative_age(created_at: &str, now: SystemTime) -> String {
+    let Some(then) = forge::parse_iso(created_at) else {
+        return String::new();
+    };
+    let now = now.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
+    age_label((now - then).max(0) as u64)
+}
+
+/// A compact age from a span in seconds: `30s`, `5m`, `2h`, `3d`, `6w`, `2y`. The one
+/// bucketing for the PR nav and the commit picker (`specs/input.md`).
+pub fn age_label(secs: u64) -> String {
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s / 60),
+        s if s < 86_400 => format!("{}h", s / 3600),
+        s if s < 604_800 => format!("{}d", s / 86_400),
+        s if s < 365 * 86_400 => format!("{}w", s / 604_800),
+        s => format!("{}y", s / (365 * 86_400)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+    #[test]
+    fn relative_age_buckets_by_magnitude() {
+        // now = 2026-06-27T12:00:00Z
+        let now = UNIX_EPOCH
+            + std::time::Duration::from_secs(
+                crate::forge::parse_iso("2026-06-27T12:00:00Z").unwrap() as u64,
+            );
+        assert_eq!(relative_age("2026-06-27T11:55:00Z", now), "5m");
+        assert_eq!(relative_age("2026-06-27T10:00:00Z", now), "2h");
+        assert_eq!(relative_age("2026-06-24T12:00:00Z", now), "3d");
+        assert_eq!(relative_age("2026-06-13T12:00:00Z", now), "2w");
+        assert_eq!(age_label(364 * 86_400), "52w");
+        assert_eq!(age_label(365 * 86_400), "1y");
+        assert_eq!(relative_age("garbage", now), "");
+    }
+
     use super::{box_rows, caret_rowcol, composer_caret_cell_position, single_line_caret_view};
 
     /// The production pairing: box rows built at the same width the caret maps against.
@@ -2428,7 +2527,8 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
     let hint = |action: K| app.keymap().hint(action).label();
     let (k, l): (String, &str) = match action {
         A::Comment => (hint(K::Comment), "comment"),
-        A::Select => (hint(K::Select), "select"),
+        // One word for one gesture: `v` marks a range end in the diff and the commit picker alike.
+        A::Select | A::CommitAnchor => (hint(K::Select), "select"),
         A::ClearSelection => ("esc".into(), "clear"),
         A::EditComment => (hint(K::Edit), "edit"),
         A::EditFile => (hint(K::Edit), "edit file"),
@@ -2450,21 +2550,22 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
             return ("tab".into(), if app.focus == Focus::Files { "diff" } else { "files" }.into());
         }
         A::Preview => (hint(K::Preview), if app.preview_active() { "source" } else { "preview" }),
-        A::NavigatorPosition => (hint(K::NavigatorPosition), "position"),
+        A::NavigatorPosition => (hint(K::NavigatorPosition), "layout"),
         A::NavigatorHide => {
             (hint(K::NavigatorHide), if app.navigator_hidden_here() { "show" } else { "hide" })
         }
         A::Scope => (
             format!(
-                "{}/{}/{}",
+                "{}/{}/{}/{}",
                 hint(K::ScopeUncommitted),
                 hint(K::ScopeBranch),
-                hint(K::ScopeLastTurn)
+                hint(K::ScopeLastTurn),
+                hint(K::ScopeCommits)
             ),
             "scope",
         ),
         A::Send => return (hint(K::Send), format!("send {}", app.store.len())),
-        A::List => (hint(K::Comments), "list"),
+        A::List => (hint(K::Comments), "comments"),
         A::Copy => (hint(K::Copy), "copy"),
         A::Save => ("enter".into(), "save"),
         A::Newline => ("shift+enter".into(), "newline"),
@@ -2474,17 +2575,24 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
         // The digits are literal, so they are spelled; the two movement keys are bound, so they
         // read off the keymap like every other hint (`specs/input.md`).
         A::MovePickerRow => (format!("1-9 {} {}", hint(K::Down), hint(K::Up)), "move"),
-        A::BasePick => (hint(K::BasePick), "pick base"),
-        A::PickBaseRow => ("enter".into(), "pick"),
-        // Every printable is filter text in the base picker, so only the arrows move
-        // (`specs/input.md` Base picker).
-        A::MoveBaseRow => ("↑↓".into(), "move"),
+        A::BasePick => (hint(K::BasePick), "base"),
+        A::CommitPick => (hint(K::CommitPick), "commits"),
+        A::PickCommitRun => {
+            let n = app.commit_picker.as_ref().map_or(0, crate::app::CommitPicker::run_len);
+            return ("enter".into(), if n > 1 { format!("open {n}") } else { "open".into() });
+        }
+        A::MoveCommitRow => (format!("{} {}", hint(K::Down), hint(K::Up)), "move"),
+        A::CloseCommitPicker => {
+            let anchored = app.commit_picker.as_ref().is_some_and(|cp| cp.anchor.is_some());
+            ("esc".into(), if anchored { "clear" } else { "cancel" })
+        }
         A::ScopeOther => {
             use crate::model::Scope;
             let others: Vec<String> = [
                 (Scope::Uncommitted, K::ScopeUncommitted),
                 (Scope::Branch, K::ScopeBranch),
                 (Scope::LastTurn, K::ScopeLastTurn),
+                (Scope::Commits, K::ScopeCommits),
             ]
             .into_iter()
             .filter(|(scope, _)| app.scope != *scope)
@@ -2494,16 +2602,18 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
         }
         A::Search => (hint(K::Search), "search"),
         A::Find => (hint(K::Find), "find"),
-        A::Wrap => (hint(K::Wrap), "wrap"),
-        A::FindStep => ("↑↓".into(), "match"),
+        A::Wrap => (hint(K::Wrap), if app.wrap { "unwrap" } else { "wrap" }),
+        // The arrows move in the find band, the search screen, and the base picker, where
+        // every printable is query text (`specs/input.md`, `specs/search.md`, `specs/find-in-file.md`).
+        A::FindStep | A::MoveBaseRow | A::PickResult => ("↑↓".into(), "move"),
         A::FlipSearchMode => {
             // The label names the destination mode: `code` from Files, `files` from Code.
             let to_code =
                 app.search.as_ref().is_none_or(|s| s.search_mode == crate::app::SearchMode::Files);
             return ("tab".into(), if to_code { "code" } else { "files" }.into());
         }
-        A::PickResult => ("↑↓".into(), "pick"),
-        A::OpenResult => ("enter".into(), "open"),
+        // `enter` opens the highlight in every list: a search result, a base, a commit run.
+        A::OpenResult | A::PickBaseRow => ("enter".into(), "open"),
         A::OpenPr => (hint(K::OpenPr), "open ↗"),
         A::Refresh => (hint(K::Refresh), "refresh"),
         A::Tabs => {
@@ -2934,7 +3044,7 @@ fn picker_trail(app: &App, row: &AgentChoice) -> String {
 fn picker_title(app: &App) -> String {
     let n = app.store.len();
     let noun = if n == 1 { "comment" } else { "comments" };
-    format!("Send {n} {noun} to")
+    format!("send {n} {noun} to")
 }
 
 fn picker_scroll(app: &App, rows: usize) -> usize {
@@ -3032,10 +3142,16 @@ fn base_picker_popup(area: Rect, app: &App) -> Rect {
         _ => None,
     };
     let widest = bp.rows.iter().chain(hit).map(base_row_width).max().unwrap_or(0);
-    menu_popup(area, app, widest, BASE_PICKER_TITLE, bp.rows.len().max(1) + 3)
+    menu_popup(area, app, widest, &base_picker_title(bp), bp.rows.len().max(1) + 3)
 }
 
-const BASE_PICKER_TITLE: &str = "Pick base branch";
+/// The base picker's title names its list, in the commit picker's register
+/// (`specs/input.md` Base picker).
+fn base_picker_title(bp: &crate::app::BasePicker) -> String {
+    let n = bp.rows.iter().filter(|r| matches!(r, crate::app::BaseChoice::Branch { .. })).count();
+    let noun = if n == 1 { "branch" } else { "branches" };
+    format!("base · {n} {noun}")
+}
 
 fn base_picker_scroll(bp: &crate::app::BasePicker, rows: usize) -> usize {
     menu_scroll(bp.cursor, bp.visible().len(), rows)
@@ -3049,7 +3165,7 @@ fn render_base_picker(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(p.purple))
-        .title(framed_title(BASE_PICKER_TITLE));
+        .title(framed_title(&base_picker_title(bp)));
     let inner = picker_inner(popup);
     frame.render_widget(block, popup);
     if inner.height == 0 {
@@ -3123,6 +3239,207 @@ pub fn hit_base_picker_row(area: Rect, app: &App, col: u16, row: u16) -> Option<
     let inner = picker_inner(base_picker_popup(area, app));
     let first = base_picker_scroll(bp, inner.height.saturating_sub(1) as usize);
     menu_hit(inner, 1, first, bp.visible().len(), col, row)
+}
+
+// --- Commit picker (specs/input.md Commit picker) -------------------------------------------
+
+/// The bar column, the sha, two spaces, the subject, two spaces, the age.
+const COMMIT_SHA_W: usize = 7;
+const COMMIT_AGE_W: usize = 3;
+
+/// One picker row's text parts, the pick row painted as the header paints the pick
+/// (`specs/input.md`). The trail is the row's dim facts, `·`-joined: `✎ N` for comments
+/// held on the commit, `merge`, and one ref.
+struct CommitRowParts {
+    sha: String,
+    subject: String,
+    trail: String,
+    author: String,
+    age: String,
+}
+
+/// Every visible row's parts, built once per paint: the comment counts come from one pass
+/// over the store, and the author column's width from one pass over the rows.
+fn commit_row_parts(app: &App, cp: &crate::app::CommitPicker) -> Vec<CommitRowParts> {
+    let mut comments: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for c in app.store.iter() {
+        if let crate::model::Rev::Commit(pick) = &c.rev {
+            *comments.entry(pick.newest.as_str()).or_default() += 1;
+        }
+    }
+    let now = now_unix();
+    (0..cp.len())
+        .map(|i| {
+            if cp.is_pick_row(i) {
+                let (_, shown, marker, tail) = pick_label(app).unwrap_or_default();
+                return CommitRowParts {
+                    sha: shown,
+                    subject: format!("{}{tail}", marker.trim_start()),
+                    trail: String::new(),
+                    author: String::new(),
+                    age: String::new(),
+                };
+            }
+            let row = cp.list_row(i).expect("a visible index names a row");
+            let mut trail: Vec<String> = Vec::new();
+            if let Some(n) = comments.get(row.sha.as_str()) {
+                trail.push(format!("✎ {n}"));
+            }
+            if row.merge {
+                trail.push("merge".to_string());
+            }
+            trail.extend(commit_ref(app, row));
+            CommitRowParts {
+                sha: git::abbreviate_oid(&row.sha),
+                subject: row.subject.clone(),
+                trail: trail.join(" · "),
+                author: row.author.clone(),
+                age: age_label(now.saturating_sub(row.time)),
+            }
+        })
+        .collect()
+}
+
+/// The one ref a row shows, by what the reviewer wants to know first: `pr` when the open
+/// PR's head is this commit, else a remote tip (it is pushed), else a tag, else another
+/// local branch (`specs/input.md`).
+fn commit_ref(app: &App, row: &git::CommitRow) -> Option<String> {
+    use git::CommitRef as R;
+    if app
+        .pr_snapshot()
+        .is_some_and(|s| s.state == crate::forge::PrState::Open && s.head_oid == row.sha)
+    {
+        return Some("pr".to_string());
+    }
+    let rank = |r: &R| match r {
+        R::Remote(_) => 0,
+        R::Tag(_) => 1,
+        R::Branch(_) => 2,
+    };
+    row.refs.iter().min_by_key(|r| rank(r)).map(R::label)
+}
+
+/// The author column's width: the widest author, capped so a long name cannot push the
+/// subjects off the popup.
+fn commit_author_width(parts: &[CommitRowParts]) -> usize {
+    const CAP: usize = 20;
+    parts.iter().map(|p| p.author.width()).max().unwrap_or(0).min(CAP)
+}
+
+fn now_unix() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+fn commit_picker_popup(area: Rect, app: &App, parts: &[CommitRowParts]) -> Rect {
+    let Some(cp) = &app.commit_picker else { return Rect::default() };
+    let author_w = commit_author_width(parts);
+    let widest = parts
+        .iter()
+        .map(|p| {
+            let trail_w = if p.trail.is_empty() { 0 } else { 2 + p.trail.width() };
+            // bar + sha + gap + subject + trail + gap + author + gap + age
+            2 + p.sha.width().max(COMMIT_SHA_W)
+                + 2
+                + p.subject.width()
+                + trail_w
+                + 2
+                + author_w
+                + 2
+                + COMMIT_AGE_W
+        })
+        .max()
+        .unwrap_or(0);
+    menu_popup(area, app, widest, &cp.title, cp.len().max(1) + 2)
+}
+
+/// The rows the list can show: one fewer than the height when the list is clipped, so the
+/// `… N more` line has a row of its own (`specs/input.md`).
+fn commit_picker_rows(cp: &crate::app::CommitPicker, height: usize) -> usize {
+    if cp.len() > height { height.saturating_sub(1) } else { height }
+}
+
+fn commit_picker_scroll(cp: &crate::app::CommitPicker, height: usize) -> usize {
+    menu_scroll(cp.cursor, cp.len(), commit_picker_rows(cp, height))
+}
+
+fn render_commit_picker(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(cp) = &app.commit_picker else { return };
+    let p = app.palette();
+    let parts = commit_row_parts(app, cp);
+    let popup = commit_picker_popup(area, app, &parts);
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(p.purple))
+        .title(framed_title(&cp.title));
+    let inner = picker_inner(popup);
+    frame.render_widget(block, popup);
+    if inner.height == 0 {
+        return;
+    }
+    if cp.is_empty() {
+        let msg = format!(" {}", cp.empty);
+        frame.render_widget(Paragraph::new(Span::styled(msg, Style::default().fg(p.dim2))), inner);
+        return;
+    }
+    let width = inner.width as usize;
+    let rows = commit_picker_rows(cp, inner.height as usize);
+    let first = commit_picker_scroll(cp, inner.height as usize);
+    let last = cp.len().min(first + rows);
+    let author_w = commit_author_width(&parts);
+    let mut items: Vec<ListItem> = (first..last)
+        .map(|i| {
+            let CommitRowParts { sha, subject, trail, author, age } = &parts[i];
+            // The bar marks the run, the way the diff's selection bar marks a line range.
+            let bar = if cp.in_run(i) { "▎" } else { " " };
+            // The author column is right-aligned to one edge before the age, so the
+            // names scan as a column (`specs/input.md`).
+            let fixed = 2 + COMMIT_SHA_W + 2 + 2 + author_w + 2 + COMMIT_AGE_W;
+            // The subject is the one bright part and clips first; the trail clips after it
+            // and only ever takes what the subject leaves (`specs/input.md`).
+            let subject = truncate_width(subject, width.saturating_sub(fixed));
+            let room = width.saturating_sub(fixed + subject.width());
+            let trail = if trail.is_empty() || room < 4 {
+                String::new()
+            } else {
+                format!("  {}", truncate_width(trail, room - 2))
+            };
+            let author = truncate_width(author, author_w);
+            // Padding counts cells, not chars: a wide-glyph author takes its width.
+            let pad = width.saturating_sub(fixed + subject.width() + trail.width())
+                + 2
+                + author_w.saturating_sub(author.width());
+            let spans = vec![
+                Span::styled(format!("{bar} "), Style::default().fg(p.yellow)),
+                Span::styled(format!("{sha:<COMMIT_SHA_W$}  "), Style::default().fg(p.blue)),
+                Span::styled(subject, text_style(p)),
+                Span::styled(trail, Style::default().fg(p.dim2)),
+                Span::styled(
+                    format!("{}{author}  {age:>COMMIT_AGE_W$}", " ".repeat(pad)),
+                    Style::default().fg(p.dim2),
+                ),
+            ];
+            selectable_row(p, spans, width, (i == cp.cursor).then_some(p.surface2))
+        })
+        .collect();
+    // A clipped list says so, like the search screen's results (`specs/search.md`).
+    if last < cp.len() {
+        items.push(ListItem::new(Line::from(Span::styled(
+            format!("  … {} more", cp.len() - last),
+            Style::default().fg(p.dim2),
+        ))));
+    }
+    frame.render_widget(List::new(items), inner);
+}
+
+/// The commit-picker row under the pointer (`specs/input.md`).
+pub fn hit_commit_picker_row(area: Rect, app: &App, col: u16, row: u16) -> Option<usize> {
+    let cp = app.commit_picker.as_ref()?;
+    let inner = picker_inner(commit_picker_popup(area, app, &commit_row_parts(app, cp)));
+    let first = commit_picker_scroll(cp, inner.height as usize);
+    // The `… more` line is not a row: a click on it is inert.
+    let shown = cp.len().min(first + commit_picker_rows(cp, inner.height as usize));
+    menu_hit(inner, 0, first, shown, col, row)
 }
 
 // --- Search screen (specs/search.md) -------------------------------------------------------
@@ -3976,7 +4293,7 @@ fn pr_comment_row(
     } else if cm.is_outdated {
         "outdated".to_string()
     } else {
-        forge::relative_age(&cm.created_at, now)
+        relative_age(&cm.created_at, now)
     };
     let author = format!("@{} ", cm.author);
     let budget = width.saturating_sub(author.width() + trailing.width() + 3).max(1);
