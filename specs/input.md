@@ -342,31 +342,31 @@ The filter is a text field with the comment editor's controls, above. `↑` and 
 
 `scope-commits` with a pick switches straight to it. With no pick, or a `gone` pick, it opens the picker without switching scope, so `esc` leaves the previous scope active. The scope chip cycles `uncommitted`, `branch`, `last-turn`, `commits`, and its `commits` step does the same.
 
-The list holds one row per commit in the universe, newest first (`review-model.md`). A row reads `sha  subject  trail  age`. The subject is the one bright part. The trail is dim and `·`-joined, and it clips after the subject. The title names the universe: `commits · 6 over main`, or `commits · last 50` without a base. A pick that is not wholly in the list, `off branch` or below the base, is one row above the list, reading the pick as the header paints it.
+The list holds one row per commit in the universe, newest first (`review-model.md`). A row reads `sha  subject  trail  author  age`. The subject is the one bright part. The trail is dim and `·`-joined, and it clips after the subject. The author is right-aligned to one column before the age, so the names scan as a column. The title names the universe: `commits · 6 over main`, or `commits · last 50` without a base. A pick that is not wholly in the list, `off branch` or below the base, is one row above the list, reading the pick as the header paints it.
 
 The trail carries, in this order:
 
-| token          | when                                                              |
-| -------------- | ----------------------------------------------------------------- |
-| `✎ N`          | N comments in the store carry this commit as their `rev`          |
-| `pr`           | the open PR's head is this commit (`forge-host.md`)               |
-| `merge`        | the commit has two or more parents                                |
-| refs           | every branch, remote tip, and `tag: …` pointing here, `HEAD` dropped |
-| author         | the author name                                                   |
+| token          | when                                                                 |
+| -------------- | -------------------------------------------------------------------- |
+| `✎ N`          | N comments in the store carry this commit as their `rev`             |
+| `merge`        | the commit has two or more parents                                   |
+| one ref        | the first of: `pr` when the open PR's head is this commit (`forge-host.md`), a remote tip, a `tag: …`, another local branch |
+
+`HEAD` and the checked-out branch are never shown: the top row is `HEAD`, and its branch is the one under review. One ref per row, because `pr`, the remote tip, and the branch usually name the same commit, and the reviewer wants the strongest fact, not the list.
 
 A list row is identified by its sha, the pick row by its pick. A poll refreshes the list under the open picker and reconciles the highlight and the anchor by that identity (`overview.md`).
 
 The highlight opens on the current pick's newest commit, else the first row. A run of two or more reopens with its anchor on the oldest commit, so `enter` without moving re-picks the same run, and a move resizes it. A run of one reopens with no anchor, so `k` then `enter` steps to the next commit. The highlight and the anchor are place state (`overview.md`).
 
 ```
-┌ commits · 6 over main ───────────────────────────────────────────────────┐
-│   1a2b3c4  Stop counting git's own lock files  dmitry                2h  │
-│ ▎ a49ed7b  Release v0.35.0  origin/feature · tag: v0.35.0 · dmitry   3h  │  ← highlighted, filled row
-│ ▎ 372cbbc  Fix what the verification found  ✎ 2 · claude             5h  │
-│ ▎ 1a11436  Fix the end-to-end review findings  pr · claude           6h  │
-│   896626a  Cut README detail  dmitry                                 1d  │
-│   ba82015  Add the commit scope spec  dmitry                         1d  │
-└ j k move · v select · enter open 3 · esc ────────────────────────────────┘
+┌ commits · 6 over main ───────────────────────────────────────────────────────┐
+│   1a2b3c4  Stop counting git's own lock files                    dmitry  2m │
+│ ▎ a49ed7b  Release v0.35.0  pr                                   dmitry  3h │  ← highlighted, filled row
+│ ▎ 372cbbc  Fix what the verification found  ✎ 2                  claude  5h │
+│ ▎ 1a11436  Fix the end-to-end review findings                    claude  6h │
+│   896626a  Cut README detail  tag: v0.34.0                       dmitry  1d │
+│   ba82015  Add the commit scope spec                             dmitry  1d │
+└ j k move · v select · enter open 3 · esc ────────────────────────────────────┘
 ```
 
 | key                   | does                                                                  |

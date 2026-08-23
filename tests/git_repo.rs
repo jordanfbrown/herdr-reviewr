@@ -929,7 +929,7 @@ fn a_merge_commit_contributes_its_tree_change() {
     let rows = herdr_reviewr::git::list_commits(r.path(), None).unwrap();
     assert!(rows[0].merge && !rows[1].merge);
     assert_eq!(rows[0].author, "Test");
-    assert_eq!(rows[0].refs, ["main", "tag: v1"], "HEAD itself is dropped");
+    assert_eq!(rows[0].refs, ["tag: v1"], "HEAD and the checked-out branch are dropped");
     let side = rows.iter().find(|c| c.subject == "side").unwrap();
     assert_eq!(side.refs, ["side"]);
     assert!(rows.iter().filter(|c| c.subject == "three").all(|c| c.refs.is_empty()));

@@ -1322,8 +1322,8 @@ pub struct CommitRow {
     pub subject: String,
     pub time: u64,
     pub author: String,
-    /// Decorations as `git log --decorate` names them, `HEAD` itself dropped: branch
-    /// names, `origin/…` tips, and `tag: …`.
+    /// Decorations as `git log --decorate` names them, `HEAD` and the checked-out branch
+    /// dropped: other branch names, `origin/…` tips, and `tag: …`.
     pub refs: Vec<String>,
     pub merge: bool,
 }
@@ -1363,13 +1363,13 @@ fn parse_commit_log(out: &str) -> Vec<CommitRow> {
         .collect()
 }
 
-/// `%D` as a list: `HEAD -> feature, origin/feature, tag: v1` becomes `feature`,
-/// `origin/feature`, `tag: v1`. A bare `HEAD` (detached) is dropped, since the top row is
-/// `HEAD` by construction.
+/// `%D` as a list: `HEAD -> feature, origin/feature, tag: v1` becomes `origin/feature`,
+/// `tag: v1`. `HEAD` and the branch it is on are dropped, since the top row is `HEAD` by
+/// construction and its branch is the one being reviewed.
 fn parse_decorations(d: &str) -> Vec<String> {
     d.split(", ")
-        .map(|r| r.strip_prefix("HEAD -> ").unwrap_or(r).trim())
-        .filter(|r| !r.is_empty() && *r != "HEAD")
+        .map(str::trim)
+        .filter(|r| !r.is_empty() && *r != "HEAD" && !r.starts_with("HEAD -> "))
         .map(str::to_string)
         .collect()
 }

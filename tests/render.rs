@@ -3627,7 +3627,13 @@ fn the_commit_picker_paints_rows_a_run_bar_and_its_count() {
     assert!(out.contains("commits · last 50"), "the title names the universe:\n{out}");
     assert!(out.contains(short(&shas[3])), "a row leads with the sha:\n{out}");
     assert!(out.contains("Stop counting git's own lock files"), "then the subject:\n{out}");
-    assert!(out.contains("main · Test"), "the refs and the author trail the subject:\n{out}");
+    // The author sits in its own right-aligned column, the checked-out branch is not a ref.
+    let rows: Vec<&str> = out.lines().filter(|l| l.contains("  Test ")).collect();
+    assert_eq!(rows.len(), 4, "every row carries the author:\n{out}");
+    let ends: std::collections::HashSet<usize> =
+        rows.iter().map(|l| l[..l.find("  Test ").unwrap()].chars().count()).collect();
+    assert_eq!(ends.len(), 1, "the author column is one edge:\n{out}");
+    assert!(!out.contains("· main"), "the checked-out branch is never a ref:\n{out}");
     let rows: Vec<&str> = out.lines().filter(|l| l.contains("▎")).collect();
     assert_eq!(rows.len(), 3, "the run carries a bar:\n{out}");
     assert!(
@@ -3819,4 +3825,32 @@ fn an_empty_universe_names_itself() {
     let out = render(&app);
     assert!(out.contains("commits · 0 over main"), "{out}");
     assert!(out.contains("no commits over main"), "{out}");
+}
+
+#[test]
+fn a_row_shows_one_ref_by_what_matters_most() {
+    let (r, mut app, shas) = commits_app();
+    r.set_origin_default("main", &shas[1]);
+    r.git(&["update-ref", "refs/remotes/origin/feature", &shas[3]]);
+    r.git(&["branch", "spike", &shas[3]]);
+    r.git(&["tag", "v1", &shas[3]]);
+    r.git(&["branch", "other", &shas[2]]);
+    app.open_commit_picker();
+    let out = render(&app);
+    let top = out.lines().skip(1).find(|l| l.contains(&shas[3][..7])).unwrap();
+    assert!(top.contains("origin/feature"), "a remote tip outranks a tag and a branch: {top}");
+    assert!(!top.contains("spike") && !top.contains("v1"), "one ref only: {top}");
+    let two = out.lines().skip(1).find(|l| l.contains(&shas[2][..7])).unwrap();
+    assert!(two.contains("other"), "a lone local branch shows: {two}");
+    app.close_commit_picker();
+
+    // The open PR's head outranks every ref.
+    app.pr = herdr_reviewr::forge::PrView::Pr(Box::new(herdr_reviewr::forge::PrSnapshot {
+        head_oid: shas[3].clone(),
+        ..common::pr_snapshot()
+    }));
+    app.open_commit_picker();
+    let out = render(&app);
+    let top = out.lines().skip(1).find(|l| l.contains(&shas[3][..7])).unwrap();
+    assert!(top.contains("  pr ") && !top.contains("origin/feature"), "{top}");
 }
