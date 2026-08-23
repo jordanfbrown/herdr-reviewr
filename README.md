@@ -283,11 +283,8 @@ header reads `no base`, with the footer offering `B pick base`.
 `e` opens the file at the line you're on, or the navigator's selected file. On a line you have
 already commented, `e` edits the comment instead.
 
-A terminal editor takes the pane, and reviewr refreshes when you quit it. A window editor opens
-its own window, so the diff stays on screen and your save turns up in it on the next poll.
-
-Set `$EDITOR` (or `$VISUAL`). reviewr knows how each editor wants its line number, keeps the
-flags you set yourself, and adds nothing of its own:
+Set `$EDITOR` (or `$VISUAL`). reviewr knows how each editor wants its line number and keeps the
+flags you set yourself:
 
 | editor | how it's called |
 | --- | --- |
@@ -296,20 +293,18 @@ flags you set yourself, and adds nothing of its own:
 | VS Code and its forks (Cursor, Windsurf, VSCodium, Insiders, Positron) | `-g path:41` |
 | JetBrains IDEs, Xcode (`xed`), TextMate, Kate | `--line 41 path` |
 
-For anything else, spell out the command:
+A terminal editor takes the pane, and reviewr refreshes when you quit it. A window editor opens
+its own window, so the diff stays up and your save turns up in it on the next poll.
+
+For an editor that is not listed, spell out the command. `{file}` and `{line}` are reviewr's and
+everything else is your editor's. No shell runs the line, so quote a path with a space in it.
 
 ```toml
-editor = "myeditor --at {line} {file}"
+editor = "/Applications/Zed.app/Contents/MacOS/cli --wait {file}:{line}"
 ```
 
-`{file}` and `{line}` substitute wherever they appear. Anything else in braces is a config
-error. No shell runs the command, so quote a path with a space in it, in the key or in
-`$EDITOR`: `"/Applications/Sublime Text.app/.../subl"`.
-
-A command carrying `--wait` or `--block` counts as a window editor and keeps the pane, even
-under a name reviewr does not know like `/Applications/Zed.app/Contents/MacOS/cli`.
-
-With no `editor` key and no `$EDITOR`, `e` tells you what to set.
+A `--wait` or `--block` in the command tells reviewr the editor opens a window. Under a binary
+name like `cli`, that is the only way it can tell.
 
 ### Keybindings
 
