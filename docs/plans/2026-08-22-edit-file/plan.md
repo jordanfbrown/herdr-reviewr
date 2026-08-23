@@ -24,7 +24,7 @@ returns them to the same place.
 - [x] `e` on a deletion or a fold opens at the nearest numbered row above.
 - [x] `editor = "code -g {file}:{line}"` substitutes both placeholders. A value naming neither gets the path appended.
 - [x] With no `editor` key, `$EDITOR` alone opens at the line for the vi family, nano, micro, kakoune, emacs, helix, the VS Code family and its forks, Zed, Sublime Text, the JetBrains family, Xcode, Kate, TextMate, BBEdit, and gedit.
-- [x] A graphical editor is given its wait flag, and a reviewer who already set one does not get it twice.
+- [x] A window editor gets its line and the path, and nothing else. A `--wait` or `--block` the reviewer wrote keeps reviewr out of the pane.
 - [x] An editor reviewr does not know opens the file without a line rather than a guessed flag.
 - [x] With no `editor` key and no `$VISUAL` or `$EDITOR`, `e` names what to set and opens nothing.
 - [x] Returning restores the open file, the cursor, the scroll, the folds, and the footer's expansion.
@@ -33,7 +33,7 @@ returns them to the same place.
 
 ## Out of Scope
 
-- The editor in a herdr split pane. reviewr runs standalone, so the suspend path must exist anyway. `specs/overview.md` Roadmap.
+- The editor in a herdr split pane. reviewr runs standalone, so the suspend path must exist anyway.
 - `e` on the search screen and in the comments list. Both keep their current meaning.
 - Guarding an edit made while an agent's turn is open. `specs/input.md#edit` names the consequence.
 
@@ -99,4 +99,5 @@ true without misstating who wrote the code.
 - 2026-08-22: the user required every major 2026 editor to work, terminal and IDE alike -> the `$EDITOR` fallback grew from one `+{line}` form to a name-keyed table of four argument dialects plus the wait flag graphical editors need -> `src/editor.rs`, `specs/input.md` Edit, `specs/config.md` Key semantics. The `editor` template key stays as the escape hatch, which is what makes a stale table fixable by the reviewer.
 - 2026-08-22: the PTY smoke test found `e` opening the scripted editor itself, because the harness wrote it inside the repository under review -> the script moved outside the worktree -> `scripts/smoke_edit_file.py`. No product change.
 - 2026-08-22: a window editor handed the pane leaves it blank and cooked for the whole edit, where a `ctrl+c` ends the session and every comment in it -> the two editor kinds split on the binary name, and a window editor is opened and forgotten while the 2s poll shows its writes -> `src/editor.rs` `wants_terminal`, `src/lib.rs` `run_editor`, `specs/input.md` Edit. An intermediate revision watched each window editor for its close; it was cut once the poll proved to show the write sooner.
+- 2026-08-23: the `already open` guard blocked the feature's own headline, moving the editor to the line now under the cursor -> the guard went, and with it the injected wait flag that existed only to keep a child alive to be asked, its `Wait` struct, its constants, the two-spelling dedup, and `Launched.path` -> `src/editor.rs`, `src/lib.rs` `run_editor`, `specs/input.md` Edit. reviewr now adds no flag of its own to any editor.
 - 2026-08-22: the terminal handoff has no unit-testable surface -> `scripts/smoke_edit_file.py` became the acceptance instrument for the editor path and gained a `just` recipe -> `justfile`, `AGENTS.md` Commands.

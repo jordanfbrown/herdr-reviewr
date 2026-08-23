@@ -158,7 +158,7 @@ fn claim_input_modes(kbd: bool) {
     }
 }
 
-/// Release what [`claim_input_modes`] claimed, in reverse.
+/// Release what [`claim_input_modes`] claimed.
 fn release_input_modes(kbd: bool) {
     if kbd {
         let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
@@ -198,10 +198,9 @@ fn restore_terminal(kbd: bool) {
 /// those bytes, so anything still buffered belongs to it and not to the review. A resize is the
 /// terminal's rather than the program's, so it is answered instead of dropped.
 ///
-/// The timeout is non-zero because `event::poll(Duration::ZERO)` never polls the terminal in
-/// crossterm 0.29: a zero leftover exits its read loop before it looks at the file descriptor,
-/// so only events parsed earlier would be seen. The deadline bounds a terminal that keeps
-/// talking.
+/// The timeout is non-zero because those replies are still in flight when the editor exits: a
+/// zero-timeout check sees only what has already arrived at the descriptor, which on a fast
+/// return is nothing. The deadline bounds a terminal that keeps talking.
 fn drain_input(app: &mut App) -> Result<()> {
     let deadline = Instant::now() + Duration::from_millis(50);
     let mut resized = false;

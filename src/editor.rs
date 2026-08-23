@@ -117,6 +117,9 @@ pub enum NoEditor {
 /// dialect. An unrecognized binary opens the file without a line rather than guessing a flag it
 /// may not accept. The binary name also decides who owns the pane, in every path
 /// ([`wants_terminal`]).
+///
+/// `path` must be absolute. That is what keeps the dialects that append it bare from handing an
+/// editor a file name it reads as a flag, so no dialect needs a `--` guard.
 pub fn resolve(
     configured: Option<&str>,
     visual: Option<&str>,
@@ -124,7 +127,6 @@ pub fn resolve(
     path: &Path,
     line: u32,
 ) -> Result<EditorCommand, NoEditor> {
-    // An absolute path can never be read as a flag, so no dialect needs a `--` guard.
     let file = path.to_string_lossy().into_owned();
     if let Some(template) = configured {
         return from_template(template, &file, line);
@@ -394,6 +396,9 @@ mod tests {
             "no editor anywhere resolves nothing"
         );
         assert_eq!(resolve(None, Some(""), Some(" "), &p(), 41), Err(NoEditor::Unset));
+        // Not empty, but it splits to one empty word, so it names no program. The pane must not
+        // change hands for a spawn that cannot happen.
+        assert_eq!(resolve(None, None, Some("\"\""), &p(), 41), Err(NoEditor::NamesNoProgram));
     }
 
     #[test]
@@ -416,6 +421,14 @@ mod tests {
             argv(&resolve(Some("myed {line} {file} {line}"), None, None, &p(), 41).unwrap()),
             "myed 41 /repo/src/lib.rs 41",
             "every occurrence substitutes"
+        );
+        // `{line}` substitutes before `{file}`, so a path is only ever placed into text nothing
+        // reads again. Swap the two and this file name becomes a second placeholder.
+        let odd = PathBuf::from("/repo/{line}.cshtml");
+        assert_eq!(
+            argv(&resolve(Some("myed {file}:{line}"), None, None, &odd, 41).unwrap()),
+            "myed /repo/{line}.cshtml:41",
+            "a path that spells a placeholder stays a path"
         );
     }
 }

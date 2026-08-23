@@ -586,23 +586,21 @@ fn unknown_key_error(path: &Path, key: &str, options: &str) -> PluginConfigError
     PluginConfigError::new(path, format!("unknown key {key:?}; expected one of {options}"))
 }
 
-/// The first `{...}` token in `command` that is neither `{file}` nor `{line}`.
+/// The first `{` in `command` that opens neither `{file}` nor `{line}`.
 ///
-/// A brace that closes nothing, or one another brace opens inside, is a character rather than a
-/// token: `--set a={b {file}` names one placeholder, not a malformed one (`specs/config.md`).
+/// A brace that closes nothing opens nothing either: `code {fil` would otherwise reach the
+/// editor as the literal argument `{fil`, which is the typo this rule exists to catch
+/// (`specs/config.md`).
 fn unknown_placeholder(command: &str) -> Option<String> {
     let mut rest = command;
     while let Some(at) = rest.find('{') {
         rest = &rest[at + 1..];
-        let end = rest.find('}')?;
-        if rest[..end].contains('{') {
-            continue; // the outer brace opened nothing; the inner one may
-        }
-        let name = &rest[..end];
-        if name != "file" && name != "line" {
-            return Some(format!("{{{name}}}"));
-        }
-        rest = &rest[end + 1..];
+        let Some(tail) = rest.strip_prefix("file}").or_else(|| rest.strip_prefix("line}")) else {
+            // Name what was typed, up to its close or the end of the value.
+            let end = rest.find('}').unwrap_or(rest.len());
+            return Some(format!("{{{}", &rest[..end]));
+        };
+        rest = tail;
     }
     None
 }
@@ -767,11 +765,6 @@ mod tests {
 
         assert_eq!(config.to_json()["editor"], "code -g {file}:{line}");
 
-        // A brace that closes nothing is a character, not a token (`specs/config.md`).
-        std::fs::write(&path, "editor = \"myed --set a={b {file}\"\n").unwrap();
-        let config = super::plugin_config_in(dir.path()).expect("a bare brace is not a token");
-        assert_eq!(config.editor(), Some("myed --set a={b {file}"));
-
         // Unset, the key resolves to null and the environment supplies the editor instead
         // (`specs/input.md` Edit).
         std::fs::write(&path, "theme = \"tokyo-night\"\n").unwrap();
@@ -817,6 +810,9 @@ mod tests {
             ("editor = 42\n", "`editor`"),
             ("editor = \"code {filename}\"\n", "`editor`"),
             ("editor = \"code {FILE}:{line}\"\n", "`editor`"),
+            // A brace that closes nothing opens nothing: `{fil` would reach the editor whole.
+            ("editor = \"code {fil\"\n", "`editor`"),
+            ("editor = \"code {fi{le} {file}\"\n", "`editor`"),
             ("github_host = \"github.com\"\n", "`github_host`"),
             ("github_host = \"gitlab.com\"\n", "`github_host`"),
             ("gitlab_host = \"gitlab.com\"\n", "`gitlab_host`"),

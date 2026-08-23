@@ -118,6 +118,10 @@ mod tests {
 
         let bare: Vec<PathBuf> = env::split_paths(&appended_path(None)).collect();
         assert_eq!(bare, COMMON_BINS.iter().map(PathBuf::from).collect::<Vec<_>>());
+
+        // A set-but-empty PATH is the same as none. Joined instead, its empty entry would put
+        // the reviewed repository's own working directory ahead of every real bin dir.
+        assert_eq!(appended_path(Some(OsStr::new(""))), appended_path(None));
     }
 
     #[test]

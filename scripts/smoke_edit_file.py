@@ -30,6 +30,8 @@ ROWS, COLS = 40, 120
 NO_CONFIG = None
 ALT_ENTER = b"\x1b[?1049h"
 ALT_LEAVE = b"\x1b[?1049l"
+BRACKETED_PASTE_ON = b"\x1b[?2004h"
+MOUSE_SGR_ON = b"\x1b[?1006h"
 EDITED_LINE = b"EDITED-BY-THE-SCRIPTED-EDITOR"
 CSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
@@ -235,6 +237,19 @@ def main():
             body = f.read()
         check("the editor's write lands in the worktree", EDITED_LINE.decode() in body)
 
+        # The return refreshes the changeset itself. This session polls every 600s, so nothing
+        # ambient can paint the new line: only `run_editor`'s own request puts it on screen.
+        check("the edit is on screen without waiting for a poll",
+              EDITED_LINE in plain(after),
+              "the diff still shows the pre-edit file after the editor returned")
+
+        # Re-claimed with the screen, or mouse selection, gutter drag-commenting and bracketed
+        # paste stay dead for the rest of the session after the first `e`.
+        check("the input modes are re-claimed with the pane",
+              all(mode in after and after.rindex(mode) > after.index(ALT_LEAVE)
+                  for mode in (BRACKETED_PASTE_ON, MOUSE_SGR_ON)),
+              "an input mode was not re-enabled after the editor returned")
+
         # The resume must repaint the whole pane, or the editor's leftovers stay on screen.
         check("the resumed frame repaints the whole pane",
               ALT_ENTER in after
@@ -253,8 +268,12 @@ def main():
               env.get("path", "").startswith(os.environ.get("PATH", "").split(":")[0]),
               f"path={env.get('path', '')[:80]}")
 
+        mark = len(s.seen)
         s.press("r")
-        check("the status names the edited file", b"edited" in plain(s.seen))
+        check("the first press after the return is honoured",
+              len(s.seen) > mark,
+              "`r` painted nothing, so the press was swallowed on the way back")
+        check("the status names the edited file", b"edited" in plain(after))
 
         s.press("q")
         check("`q` still quits", s.proc.wait(timeout=10) == 0)
@@ -298,6 +317,9 @@ def main():
         before = s.cpu_seconds()
         s.drain(quiet=0.3, timeout=2.0)
         burned = s.cpu_seconds() - before
+        # `ps -o time=` reports hundredths on macOS and whole seconds on Linux, so the bound is
+        # exact here and degrades to "did not burn a core" there. Either resolution catches the
+        # regression it exists for: a loop asking to wake at a deadline already in the past.
         check("and rests while it waits", burned < 0.2, f"burned {burned:.2f}s of cpu in 2s")
         # Nothing waits for the editor to close: the poll shows the write while the file is
         # still out, with no keypress from the reviewer.

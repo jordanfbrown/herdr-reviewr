@@ -18,6 +18,11 @@ cargo run -- ~/some/repo   # or against any repo
 `just ci` runs exactly what CI runs: format check, clippy with warnings as errors, tests, and a
 release build. Green there means green in CI.
 
+`just smoke-edit` is the one check CI cannot run. It drives a real release binary through a pty
+to test the `e` key: unit tests stop at the editor's argv, and everything past it is terminal
+state. Run it after any change to `run_editor`, the terminal mode stack, or the editor dialects.
+It takes about a minute.
+
 To test a change inside real herdr panes, `just qa-install` swaps your build into the installed
 plugin and `just qa-restore` brings the release back. The details and the sharp edges live in
 `docs/qa-install.md`.

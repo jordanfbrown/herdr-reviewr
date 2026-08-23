@@ -7,7 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-- **`e` opens the file you're looking at in your editor.** From the diff, the File view, or the
+- **`e` opens the file you're looking at in your editor.** From the diff, **All files**, or the
   navigator, `e` opens that file at the line under the cursor. On a line you've already commented,
   `e` still edits the comment. A terminal editor takes over the pane and reviewr refreshes when you
   quit it. A window editor opens beside you, so the diff stays on screen and your change shows up

@@ -2991,7 +2991,7 @@ impl App {
 
     /// Whether `edit` opens a file here. The branch [`Self::start_edit`] takes, asked by the
     /// footer, so the bar and the press cannot disagree (`specs/input.md` Edit).
-    pub(crate) fn edit_opens_a_file(&self) -> bool {
+    fn edit_opens_a_file(&self) -> bool {
         !self.comment_claims_edit() && self.edit_target().is_some()
     }
 
@@ -2999,8 +2999,9 @@ impl App {
     ///
     /// Pure and total. The press acts on it and the footer offers the key exactly when it is
     /// `Some`, so the two cannot disagree, and no surface can be reached without passing
-    /// through here (`specs/input.md` Edit).
-    pub(crate) fn edit_target(&self) -> Option<EditTarget> {
+    /// through here (`specs/input.md` Edit). Whether the file is still on disk is the press's
+    /// question, asked in `run_editor`: the footer asks this one twice a frame.
+    fn edit_target(&self) -> Option<EditTarget> {
         // The `PR` tab names no file of its own, and the open diff behind it belongs to a
         // file tab the reviewer left.
         if !self.tab.is_file_tab() {
@@ -3024,11 +3025,6 @@ impl App {
             // was opened by path rather than by row. A preview paints no numbered rows.
             (self.diff_path.clone()?, !self.preview_active())
         };
-        // Whether the file is there is the disk's answer, and the press asks it. The
-        // changeset cannot stand in: `git rm --cached` calls a file deleted while it sits in
-        // the worktree, and a scope that does not diff the worktree calls a removed file
-        // present. A `stat` per frame is not worth either (`specs/input.md` Edit).
-        //
         // The nearest row at or above the cursor carrying a worktree line number. A deletion
         // and a fold carry none, and a notice diff paints no rows at all, so each falls back
         // to the file's start.
@@ -3041,12 +3037,6 @@ impl App {
     }
 
     fn edit_comment(&mut self) {
-        // Cards don't show in the preview, so `e` on the invisible source cursor is inert;
-        // an edit reached through the comments-list overlay drops back to source, where
-        // the composer and its anchor are visible (specs/diff-view.md).
-        if self.preview_active() && self.mode != Mode::List {
-            return;
-        }
         // Editing from the comments-list overlay returns there on finish (else to the diff).
         let from_list = self.mode == Mode::List;
         let Some(i) = self.target_comment() else { return };
@@ -4958,6 +4948,36 @@ mod tests {
             app.editor_request,
             Some(EditTarget { path: "src/lib.rs".into(), line: 10 }),
             "so the same key names the file"
+        );
+    }
+
+    #[test]
+    fn a_preview_over_a_commented_line_opens_the_file() {
+        // Cards are not painted in a preview, so nothing on screen claims the key and the
+        // previewed file wins it, even with the source cursor on a comment
+        // (`specs/input.md` Edit). The table above cannot assert this: its footer expectation
+        // is derived from `comment_claims_edit`, so only an outcome catches a wrong predicate.
+        use super::EditTarget;
+        let mut app = edit_app();
+        app.store.add(crate::model::Comment {
+            file: "src/lib.rs".into(),
+            side: Side::New,
+            start: 10,
+            end: 10,
+            lines: "+x".into(),
+            text: "note".into(),
+            diff_anchored: true,
+        });
+        app.diff_cursor = 0;
+        app.preview_text = "# heading".into();
+        app.preview = true;
+
+        app.start_edit();
+        assert!(!app.composing(), "an invisible card does not claim the key");
+        assert_eq!(
+            app.editor_request,
+            Some(EditTarget { path: "src/lib.rs".into(), line: 1 }),
+            "the previewed file opens at its start"
         );
     }
 
