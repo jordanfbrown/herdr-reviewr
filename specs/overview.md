@@ -1,7 +1,7 @@
 ---
-Status: Current
+Status: Draft
 Created: 2026-06-23
-Last edited: 2026-08-22
+Last edited: 2026-08-23
 ---
 
 # herdr-reviewr
@@ -43,7 +43,7 @@ to move the work forward.
 - The `Changes` view: a changed-files list per scope plus the diff viewer (`diff-view.md`).
 - The `All files` tab: a repo tree and content viewer, annotated with the active scope's changes (`file-list.md`, `diff-view.md`).
 - The `PR` tab: pull-request identity, state, checks, and comments, read from the repository's forge, with external links only (`forge-host.md`, `pr-tab.md`).
-- Three scopes: `uncommitted`, `branch`, `last-turn` (`review-model.md`).
+- Four scopes: `uncommitted`, `branch`, `last-turn`, `commits` (`review-model.md`).
 - Comments anchored to `path:start-end`, held in memory for the review pass.
 - Export of all comments to the agent input or the clipboard.
 - Poll-based refresh plus a manual refresh key.

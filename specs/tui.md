@@ -1,7 +1,7 @@
 ---
-Status: Current
+Status: Draft
 Created: 2026-06-23
-Last edited: 2026-08-19
+Last edited: 2026-08-23
 ---
 
 # TUI
@@ -30,13 +30,15 @@ The terminal frame: the pane layout, the tabs, and how the view stays current.
 - The `All files` tab's header label reads `Files`.
 - On the `branch` scope the header names the base after the scope. Clicking it opens the base picker (`input.md`). With no resolving base it reads `no base`.
 - A branch-name base paints `vs dev`. Any other resolving spelling paints `vs HEAD~1 (a1b2c3d)`. A spelling that is already a prefix of that SHA paints once, `vs a1b2c3d`. The `--base` flag uses the same paint.
+- On the `commits` scope the header names the pick after the scope. Clicking it opens the commit picker (`input.md`). A run of one paints `commits 1a2b3c4 Stop counting git's own lock files`. A longer run paints `commits 896626a..a49ed7b (4)`.
+- An `off branch` pick paints its marker after the pick, `commits 1a2b3c4 Stop counting… · off branch`. A `gone` pick paints `commits 896626a..a49ed7b · gone` (`review-model.md`).
 - A skipped pick or `--base` shows after the base, `vs main · dev missing` — and after the empty state too, `no base · dev missing`, so a dormant choice never reads as never-chosen. A skipped non-branch spelling uses the stored spelling, `· HEAD~1 missing`.
-- A base name the header cannot fit truncates with a trailing `…`. A `spelling (sha)` base clips the spelling and keeps `(sha)` when `(sha)` still fits. The picker always shows it whole. Too narrow for even one column of the name, the base leaves the header rather than paint a nameless `vs`.
+- A subject the header cannot fit truncates with a trailing `…`, keeping the sha and any marker. A base name the header cannot fit truncates with a trailing `…`. A `spelling (sha)` base clips the spelling and keeps `(sha)` when `(sha)` still fits. The picker always shows it whole. Too narrow for even one column of the name, the base leaves the header rather than paint a nameless `vs`.
 - The header's line totals drop a zero side and vanish when nothing changed, like a file row's stats (`file-list.md`).
 - The active tab sets both panes: diff and changed files in `Changes`, content and repo tree in `All files`, checks and comments in `PR` (`diff-view.md`, `pr-tab.md`).
 - The comment input opens inline, directly under the last line of the selection, and grows as you type (`input.md`). It is never a footer band.
 - The footer is a live action bar (`input.md`).
-- The comments list, the agent picker, and the base picker open as popups over the body (`input.md`, `herdr-host.md`). While one is open, every painted color in the header and the body recedes halfway to the theme base. The footer stays bright.
+- The comments list, the agent picker, the base picker, and the commit picker open as popups over the body (`input.md`, `herdr-host.md`). While one is open, every painted color in the header and the body recedes halfway to the theme base. The footer stays bright.
 - The review loop is the same in `Changes` and `All files`. `PR` is a read-only mirror. Comments are one set across the authoring tabs and export together.
 
 The navigator has one global position across all tabs, and the position derives the split direction.
@@ -78,10 +80,11 @@ A layout change moves nothing else (`overview.md`), and both remembered shares p
 - The view polls the worktree every `N` seconds, default 2, configurable.
 - A poll rebuilds the changed set and the file tree, reconciles them into the view (`overview.md`), and refreshes the open diff as it lands.
 - A result lands whole: the header counts and the list they head come from one refresh.
-- A result lands only when the view it described is still current: the same repository, tab, scope, and scope base. The scope base is the branch base or the turn baseline. A result that no longer matches is discarded, and a newer request supersedes an older one.
+- A result lands only when the view it described is still current: the same repository, tab, scope, and scope base. The scope base is the branch base, the turn baseline, or the commit pick. A result that no longer matches is discarded, and a newer request supersedes an older one.
 - Entering a file tab paints the tab's stashed state in the switch frame, exactly as it was left, and a refresh lands behind it (`overview.md`). A first-ever visit has no stash and loads before its frame.
-- A scope switch rebuilds the changed set before its frame. A `last-turn` switch diffs against the most recently observed baseline. The `All files` tree re-marks its rows in place and refreshes behind the switch.
+- A scope switch rebuilds the changed set before its frame. A `last-turn` switch diffs against the most recently observed baseline. A `commits` switch diffs the held pick. The `All files` tree re-marks its rows in place and refreshes behind the switch.
 - While a comment is being composed, the input and its diff are frozen. A result that lands mid-composition leaves both untouched, however early its refresh began. The file list still updates.
+- In `commits` scope, a `gone` pick reads `commit 1a2b3c4 is gone` in both panes, naming the first missing commit. `All files` keeps its content.
 - `r` triggers an immediate refresh. Its result lands like a poll's.
 - `r` shows a one-cell `⟳` immediately. An ambient refresh shows it only after 200ms in flight. Once shown, the glyph holds for at least 300ms. It paints in a reserved cell at the end of the tab strip, so nothing shifts when it appears.
 - Each tab shows only its own refresh: the file tabs the world refresh, the `PR` tab its fetch on its own cadence (`pr-tab.md`).
@@ -91,7 +94,7 @@ A layout change moves nothing else (`overview.md`), and both remembered shares p
 ## Failure semantics
 
 - A poll never touches the comment input or saved comments. Draft text and caret survive every refresh.
-- A config error and its automatic-reload remedy replace the view. Saved comments, an open composer, comments list, or base picker, and the footer's shortcut expansion all survive it (`config.md`).
+- A config error and its automatic-reload remedy replace the view. Saved comments, an open composer, comments list, or picker with its highlight and anchor, and the footer's shortcut expansion all survive it (`config.md`).
 - A poll that finds no change makes no visible update: no flicker, no lost selection or scroll.
 - A refresh in flight never delays input or a paint.
 - A first open of a very large file can briefly block.
