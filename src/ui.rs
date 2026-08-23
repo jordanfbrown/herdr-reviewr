@@ -3198,19 +3198,45 @@ pub fn hit_base_picker_row(area: Rect, app: &App, col: u16, row: u16) -> Option<
 const COMMIT_SHA_W: usize = 7;
 const COMMIT_AGE_W: usize = 3;
 
-/// One picker row's text parts: `(sha, subject, age)`, the pick row painted as the header
-/// paints the pick (`specs/input.md`).
+/// One picker row's text parts: `(sha, subject, trail, age)`, the pick row painted as the
+/// header paints the pick (`specs/input.md`). The trail is the row's dim facts, `·`-joined:
+/// `✎ N` for comments held on the commit, `pr` on the open PR's head, `merge`, the refs
+/// pointing at it, and the author.
 fn commit_row_parts(
     app: &App,
     cp: &crate::app::CommitPicker,
     i: usize,
-) -> (String, String, String) {
+) -> (String, String, String, String) {
     if cp.is_pick_row(i) {
         let (_, shown, marker, tail) = pick_label(app).unwrap_or_default();
-        return (shown, format!("{}{tail}", marker.trim_start()), String::new());
+        return (shown, format!("{}{tail}", marker.trim_start()), String::new(), String::new());
     }
     let row = cp.list_row(i).expect("a visible index names a row");
-    (git::abbreviate_oid(&row.sha), row.subject.clone(), age_label(row.time, now_unix()))
+    let mut trail: Vec<String> = Vec::new();
+    let comments =
+        app.store.iter().filter(|c| c.rev == crate::model::Rev::Commit(row.sha.clone())).count();
+    if comments > 0 {
+        trail.push(format!("✎ {comments}"));
+    }
+    if app
+        .pr_snapshot()
+        .is_some_and(|s| s.state == crate::forge::PrState::Open && s.head_oid == row.sha)
+    {
+        trail.push("pr".to_string());
+    }
+    if row.merge {
+        trail.push("merge".to_string());
+    }
+    trail.extend(row.refs.iter().cloned());
+    if !row.author.is_empty() {
+        trail.push(row.author.clone());
+    }
+    (
+        git::abbreviate_oid(&row.sha),
+        row.subject.clone(),
+        trail.join(" · "),
+        age_label(row.time, now_unix()),
+    )
 }
 
 fn now_unix() -> u64 {
@@ -3234,17 +3260,24 @@ fn commit_picker_popup(area: Rect, app: &App) -> Rect {
     let Some(cp) = &app.commit_picker else { return Rect::default() };
     let widest = (0..cp.len())
         .map(|i| {
-            let (sha, subject, _) = commit_row_parts(app, cp, i);
-            // bar + sha + gap + subject + gap + age
-            2 + sha.width().max(COMMIT_SHA_W) + 2 + subject.width() + 2 + COMMIT_AGE_W
+            let (sha, subject, trail, _) = commit_row_parts(app, cp, i);
+            let trail_w = if trail.is_empty() { 0 } else { 2 + trail.width() };
+            // bar + sha + gap + subject + trail + gap + age
+            2 + sha.width().max(COMMIT_SHA_W) + 2 + subject.width() + trail_w + 2 + COMMIT_AGE_W
         })
         .max()
         .unwrap_or(0);
     menu_popup(area, app, widest, &cp.title, cp.len().max(1) + 2)
 }
 
-fn commit_picker_scroll(cp: &crate::app::CommitPicker, rows: usize) -> usize {
-    menu_scroll(cp.cursor, cp.len(), rows)
+/// The rows the list can show: one fewer than the height when the list is clipped, so the
+/// `… N more` line has a row of its own (`specs/input.md`).
+fn commit_picker_rows(cp: &crate::app::CommitPicker, height: usize) -> usize {
+    if cp.len() > height { height.saturating_sub(1) } else { height }
+}
+
+fn commit_picker_scroll(cp: &crate::app::CommitPicker, height: usize) -> usize {
+    menu_scroll(cp.cursor, cp.len(), commit_picker_rows(cp, height))
 }
 
 fn render_commit_picker(frame: &mut Frame, app: &App, area: Rect) {
@@ -3267,19 +3300,30 @@ fn render_commit_picker(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
     let width = inner.width as usize;
+    let rows = commit_picker_rows(cp, inner.height as usize);
     let first = commit_picker_scroll(cp, inner.height as usize);
-    let items: Vec<ListItem> = (first..cp.len().min(first + inner.height as usize))
+    let last = cp.len().min(first + rows);
+    let mut items: Vec<ListItem> = (first..last)
         .map(|i| {
-            let (sha, subject, age) = commit_row_parts(app, cp, i);
+            let (sha, subject, trail, age) = commit_row_parts(app, cp, i);
             // The bar marks the run, the way the diff's selection bar marks a line range.
             let bar = if cp.in_run(i) { "▎" } else { " " };
             let fixed = 2 + COMMIT_SHA_W + 2 + 2 + COMMIT_AGE_W;
+            // The subject is the one bright part and clips first; the trail clips after it
+            // and only ever takes what the subject leaves (`specs/input.md`).
             let subject = truncate_width(&subject, width.saturating_sub(fixed));
-            let pad = width.saturating_sub(fixed + subject.width()) + 2;
+            let room = width.saturating_sub(fixed + subject.width());
+            let trail = if trail.is_empty() || room < 4 {
+                String::new()
+            } else {
+                format!("  {}", truncate_width(&trail, room - 2))
+            };
+            let pad = width.saturating_sub(fixed + subject.width() + trail.width()) + 2;
             let spans = vec![
                 Span::styled(format!("{bar} "), Style::default().fg(p.yellow)),
                 Span::styled(format!("{sha:<COMMIT_SHA_W$}  "), Style::default().fg(p.blue)),
                 Span::styled(subject, text_style(p)),
+                Span::styled(trail, Style::default().fg(p.dim2)),
                 Span::styled(
                     format!("{}{age:>COMMIT_AGE_W$}", " ".repeat(pad)),
                     Style::default().fg(p.dim2),
@@ -3288,6 +3332,13 @@ fn render_commit_picker(frame: &mut Frame, app: &App, area: Rect) {
             selectable_row(p, spans, width, (i == cp.cursor).then_some(p.surface2))
         })
         .collect();
+    // A clipped list says so, like the search screen's results (`specs/search.md`).
+    if last < cp.len() {
+        items.push(ListItem::new(Line::from(Span::styled(
+            format!("  … {} more", cp.len() - last),
+            Style::default().fg(p.dim2),
+        ))));
+    }
     frame.render_widget(List::new(items), inner);
 }
 
@@ -3296,7 +3347,9 @@ pub fn hit_commit_picker_row(area: Rect, app: &App, col: u16, row: u16) -> Optio
     let cp = app.commit_picker.as_ref()?;
     let inner = picker_inner(commit_picker_popup(area, app));
     let first = commit_picker_scroll(cp, inner.height as usize);
-    menu_hit(inner, 0, first, cp.len(), col, row)
+    // The `… more` line is not a row: a click on it is inert.
+    let shown = cp.len().min(first + commit_picker_rows(cp, inner.height as usize));
+    menu_hit(inner, 0, first, shown, col, row)
 }
 
 // --- Search screen (specs/search.md) -------------------------------------------------------

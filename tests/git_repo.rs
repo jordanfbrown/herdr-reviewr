@@ -924,6 +924,15 @@ fn a_merge_commit_contributes_its_tree_change() {
     let files = changed_between(r.path(), &old, &merge).unwrap();
     let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(paths, ["side.rs"]);
+    // The row knows it is a merge, its author, and the refs pointing at it.
+    r.git(&["tag", "v1"]);
+    let rows = herdr_reviewr::git::list_commits(r.path(), None).unwrap();
+    assert!(rows[0].merge && !rows[1].merge);
+    assert_eq!(rows[0].author, "Test");
+    assert_eq!(rows[0].refs, ["main", "tag: v1"], "HEAD itself is dropped");
+    let side = rows.iter().find(|c| c.subject == "side").unwrap();
+    assert_eq!(side.refs, ["side"]);
+    assert!(rows.iter().filter(|c| c.subject == "three").all(|c| c.refs.is_empty()));
 }
 
 #[test]

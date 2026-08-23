@@ -3627,6 +3627,7 @@ fn the_commit_picker_paints_rows_a_run_bar_and_its_count() {
     assert!(out.contains("commits · last 50"), "the title names the universe:\n{out}");
     assert!(out.contains(short(&shas[3])), "a row leads with the sha:\n{out}");
     assert!(out.contains("Stop counting git's own lock files"), "then the subject:\n{out}");
+    assert!(out.contains("main · Test"), "the refs and the author trail the subject:\n{out}");
     let rows: Vec<&str> = out.lines().filter(|l| l.contains("▎")).collect();
     assert_eq!(rows.len(), 3, "the run carries a bar:\n{out}");
     assert!(
@@ -3753,6 +3754,44 @@ fn the_commits_header_names_the_pick_and_its_verdict() {
     let footer = footer_line(&out);
     assert!(footer.trim_start().starts_with("G commits"), "{footer}");
     assert!(footer.contains("u/b/t scope"), "the other three scopes: {footer}");
+}
+
+#[test]
+fn the_picker_trail_counts_comments_and_a_tall_list_says_more() {
+    let (r, mut app, shas) = commits_app();
+    // A comment on `two`.
+    app.open_commit_picker();
+    app.commit_picker_move(1);
+    app.commit_picker_pick().unwrap();
+    app.select_file(0).unwrap();
+    app.focus = Focus::Diff;
+    app.diff_cursor = app.diff.rows.iter().position(|r| r.marker() == '+').unwrap();
+    app.start_comment();
+    app.input_push('x');
+    app.submit_comment();
+    app.open_commit_picker();
+    let out = render(&app);
+    let two = out.lines().skip(1).find(|l| l.contains(&shas[2][..7])).unwrap();
+    assert!(two.contains("✎ 1"), "the commented commit counts its comments: {two}");
+    let three = out.lines().skip(1).find(|l| l.contains(&shas[3][..7])).unwrap();
+    assert!(!three.contains('✎'), "an uncommented one does not: {three}");
+    app.close_commit_picker();
+
+    // Forty more commits: a 12-row terminal clips the list and says so.
+    for i in 0..40 {
+        r.write("n.rs", &format!("{i}\n"));
+        r.commit_all(&format!("n{i}"));
+    }
+    app.open_commit_picker();
+    let buf = render_size(&app, 140, 12);
+    let out = dump(&buf);
+    let more = out.lines().find(|l| l.contains("… ")).expect("the clip line");
+    assert!(more.contains("more"), "{more}");
+    assert!(!out.contains(&shas[0][..7]), "the root is below the clip");
+    // The clip line is not a row: a click on it is inert.
+    let y = out.lines().position(|l| l.contains("… ")).unwrap() as u16;
+    let x = more.find('…').unwrap() as u16;
+    assert_eq!(ui::hit_commit_picker_row(Rect::new(0, 0, 140, 12), &app, x, y), None);
 }
 
 #[test]

@@ -1313,13 +1313,19 @@ pub fn run_length(repo: &Path, oldest: &str, newest: &str) -> Option<usize> {
     git_line(repo, &args)?.parse().ok()
 }
 
-/// One row of the commit picker: the full id, the subject, and the author time as unix
-/// seconds (specs/input.md Commit picker).
+/// One row of the commit picker (specs/input.md Commit picker): the full id, the subject,
+/// the committer time as unix seconds, the author, the refs pointing at it, and whether it
+/// is a merge.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CommitRow {
     pub sha: String,
     pub subject: String,
     pub time: u64,
+    pub author: String,
+    /// Decorations as `git log --decorate` names them, `HEAD` itself dropped: branch
+    /// names, `origin/…` tips, and `tag: …`.
+    pub refs: Vec<String>,
+    pub merge: bool,
 }
 
 /// The picker's universe, newest first: `merge-base..HEAD` over a resolved `base` oid, or
@@ -1330,7 +1336,7 @@ pub fn list_commits(repo: &Path, base: Option<&str>) -> Result<Vec<CommitRow>> {
         return Ok(Vec::new());
     }
     let range = base.and_then(|b| merge_base(repo, b)).map(|mb| format!("{mb}..HEAD"));
-    let mut args = vec!["log", "--format=%H%x00%s%x00%ct", "-z"];
+    let mut args = vec!["log", "--format=%H%x00%s%x00%ct%x00%an%x00%D%x00%P", "-z"];
     match &range {
         Some(r) => args.push(r),
         None => args.extend(["-50", "HEAD"]),
@@ -1339,18 +1345,32 @@ pub fn list_commits(repo: &Path, base: Option<&str>) -> Result<Vec<CommitRow>> {
     Ok(parse_commit_log(&out))
 }
 
-/// Parse `git log --format=%H%x00%s%x00%ct -z` output: three NUL-separated fields per
-/// commit, commits themselves NUL-terminated.
+/// Parse `git log --format=%H%x00%s%x00%ct%x00%an%x00%D%x00%P -z` output: six NUL-separated
+/// fields per commit, commits themselves NUL-terminated.
 fn parse_commit_log(out: &str) -> Vec<CommitRow> {
     let fields: Vec<&str> = out.split('\0').collect();
     fields
-        .chunks(3)
-        .filter(|c| c.len() == 3 && !c[0].is_empty())
+        .chunks(6)
+        .filter(|c| c.len() == 6 && !c[0].is_empty())
         .map(|c| CommitRow {
             sha: c[0].to_string(),
             subject: c[1].to_string(),
             time: c[2].trim().parse().unwrap_or(0),
+            author: c[3].to_string(),
+            refs: parse_decorations(c[4]),
+            merge: c[5].split_whitespace().count() > 1,
         })
+        .collect()
+}
+
+/// `%D` as a list: `HEAD -> feature, origin/feature, tag: v1` becomes `feature`,
+/// `origin/feature`, `tag: v1`. A bare `HEAD` (detached) is dropped, since the top row is
+/// `HEAD` by construction.
+fn parse_decorations(d: &str) -> Vec<String> {
+    d.split(", ")
+        .map(|r| r.strip_prefix("HEAD -> ").unwrap_or(r).trim())
+        .filter(|r| !r.is_empty() && *r != "HEAD")
+        .map(str::to_string)
         .collect()
 }
 

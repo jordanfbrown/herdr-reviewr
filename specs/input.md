@@ -300,7 +300,7 @@ Only the unmodified `enter` sends. `Alt+Enter` and `Shift+Enter` insert a newlin
 
 - A click moves the highlight to the clicked row. A click on the highlighted row sends. The highlight is armed when the picker opens, so a first click on the armed row sends immediately. Every other gesture is inert, and none reaches the view behind.
 - The digits are literal here, whatever `tab-changes` and its siblings are bound to. A modified digit moves nothing.
-- A picker taller than the pane scrolls with the highlight.
+- A picker taller than the pane scrolls with the highlight, and its last line reads `… N more` while rows remain below, like the search screen's clip (`search.md`). A click on that line is inert.
 - `esc` returns to the view the send was issued from, the comments list and the find band included.
 
 ### Base picker
@@ -342,21 +342,31 @@ The filter is a text field with the comment editor's controls, above. `↑` and 
 
 `scope-commits` with a pick switches straight to it. With no pick, or a `gone` pick, it opens the picker without switching scope, so `esc` leaves the previous scope active. The scope chip cycles `uncommitted`, `branch`, `last-turn`, `commits`, and its `commits` step does the same.
 
-The list holds one row per commit in the universe, newest first (`review-model.md`). A row reads `sha  subject  age`. The title names the universe: `commits · 6 over main`, or `commits · last 50` without a base. A pick that is not wholly in the list, `off branch` or below the base, is one row above the list, reading the pick as the header paints it.
+The list holds one row per commit in the universe, newest first (`review-model.md`). A row reads `sha  subject  trail  age`. The subject is the one bright part. The trail is dim and `·`-joined, and it clips after the subject. The title names the universe: `commits · 6 over main`, or `commits · last 50` without a base. A pick that is not wholly in the list, `off branch` or below the base, is one row above the list, reading the pick as the header paints it.
+
+The trail carries, in this order:
+
+| token          | when                                                              |
+| -------------- | ----------------------------------------------------------------- |
+| `✎ N`          | N comments in the store carry this commit as their `rev`          |
+| `pr`           | the open PR's head is this commit (`forge-host.md`)               |
+| `merge`        | the commit has two or more parents                                |
+| refs           | every branch, remote tip, and `tag: …` pointing here, `HEAD` dropped |
+| author         | the author name                                                   |
 
 A list row is identified by its sha, the pick row by its pick. A poll refreshes the list under the open picker and reconciles the highlight and the anchor by that identity (`overview.md`).
 
 The highlight opens on the current pick's newest commit, else the first row. A run of two or more reopens with its anchor on the oldest commit, so `enter` without moving re-picks the same run, and a move resizes it. A run of one reopens with no anchor, so `k` then `enter` steps to the next commit. The highlight and the anchor are place state (`overview.md`).
 
 ```
-┌ commits · 6 over main ──────────────────────────────────┐
-│   1a2b3c4  Stop counting git's own lock files     2h    │
-│ ▸ a49ed7b  Release v0.35.0                        3h  │ │
-│   372cbbc  Fix what the verification found        5h  │ │
-│   1a11436  Fix the end-to-end review findings     6h  │ │
-│   896626a  Cut README detail                      1d    │
-│   ba82015  Add the commit scope spec              1d    │
-└ j k move · v select · enter open 3 · esc ───────────────┘
+┌ commits · 6 over main ───────────────────────────────────────────────────┐
+│   1a2b3c4  Stop counting git's own lock files  dmitry                2h  │
+│ ▎ a49ed7b  Release v0.35.0  origin/feature · tag: v0.35.0 · dmitry   3h  │  ← highlighted, filled row
+│ ▎ 372cbbc  Fix what the verification found  ✎ 2 · claude             5h  │
+│ ▎ 1a11436  Fix the end-to-end review findings  pr · claude           6h  │
+│   896626a  Cut README detail  dmitry                                 1d  │
+│   ba82015  Add the commit scope spec  dmitry                         1d  │
+└ j k move · v select · enter open 3 · esc ────────────────────────────────┘
 ```
 
 | key                   | does                                                                  |

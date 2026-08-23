@@ -5017,6 +5017,9 @@ mod tests {
             sha: sha.repeat(40),
             subject: format!("commit {sha}"),
             time: 1,
+            author: "Test".to_string(),
+            refs: Vec::new(),
+            merge: false,
         };
         let mut old = App::blocked(PathBuf::from("."), Scope::Commits, None);
         old.mode = Mode::CommitPick;
