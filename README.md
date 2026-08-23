@@ -17,6 +17,7 @@ the terminal.
 One persistent pane, pointed at a git worktree:
 
 - **Diff review** — the agent's changed files, syntax-highlighted.
+- **Four diff scopes** — uncommitted, branch, last turn, commits.
 - **Last-turn diff** — what the worktree's latest turn changed, on its own.
 - **Line comments** — comment on a line or a range. Then send it to the agent.
 - **Text selection** — drag over any text to copy it, like an editor.
