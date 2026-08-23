@@ -5173,7 +5173,11 @@ mod search_overlay {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
                     walk(root, &path, out);
-                } else {
+                } else if path.extension().is_none_or(|e| e != "lock") {
+                    // git writes its own locks whenever it likes — `maintenance.lock` lands
+                    // mid-test on a CI runner with background maintenance on. Those are git's,
+                    // never reviewr's, and counting them fails the run for someone else's file.
+                    // Everything else under `.git` still counts, so a stray ref write is caught.
                     out.push(path.strip_prefix(root).unwrap().to_string_lossy().into_owned());
                 }
             }
