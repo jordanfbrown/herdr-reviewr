@@ -812,6 +812,8 @@ mod tests {
             ("theme = \"unknown\"\n", "`theme`"),
             ("default_scope = \"weekly\"\n", "`default_scope`"),
             ("default_scope = \"last turn\"\n", "`default_scope`"),
+            // `commits` is never a start scope: the pane holds no pick yet.
+            ("default_scope = \"commits\"\n", "`default_scope`"),
             ("navigator_position = \"center\"\n", "`navigator_position`"),
             ("toggle_placement = \"left\"\n", "`toggle_placement`"),
             ("toggle_direction = \"left\"\n", "`toggle_direction`"),

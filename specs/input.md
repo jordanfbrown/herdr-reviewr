@@ -174,7 +174,8 @@ right of the `do` row.
 
 ```
  do    e edit · d delete · n/N jump · s send 2                                ?
- go    u/b/t/g scope · / search · ctrl+f find · w wrap · l comments · y copy · r refresh · 1·2·3 tabs
+ go    u/b/t/g scope · B base · G commits · / search · ctrl+f find · w wrap · l comments · y copy
+       r refresh · 1·2·3 tabs
        tab files · p layout · z hide · q quit
  move  j k · ] [ hunk · f F file · PageUp PageDown
 ```
@@ -236,7 +237,7 @@ Row 1's primary and actions follow the cursor:
 | an expanded directory                   | `← collapse`                  | `z hide`                             |
 | nothing to review (awaiting turn)       | `u/b/g scope`                 | `r refresh`                          |
 | the `branch` scope with no base         | `B base`                      | `u/t/g scope · r refresh`            |
-| a `gone` commit pick                    | `G commits`                   | `u/b/t scope · r refresh`            |
+| a `gone` commit pick (`Changes`)        | `G commits`                   | `u/b/t scope · r refresh`            |
 | an empty read pane, navigator hidden    | `z show`                      | `tab files · e edit file`            |
 
 - An armed crossing outranks the cursor's own action and leads row 1, since only the footer says the next press leaves the file. It is the one movement key on row 1 (see Changeset traversal). While it is armed, the `move` band drops the hunk step, whose key row 1 now shows.
@@ -301,7 +302,7 @@ Only the unmodified `enter` sends. `Alt+Enter` and `Shift+Enter` insert a newlin
 
 - A click moves the highlight to the clicked row. A click on the highlighted row sends. The highlight is armed when the picker opens, so a first click on the armed row sends immediately. Every other gesture is inert, and none reaches the view behind.
 - The digits are literal here, whatever `tab-changes` and its siblings are bound to. A modified digit moves nothing.
-- A picker taller than the pane scrolls with the highlight, and its last line reads `… N more` while rows remain below, like the search screen's clip (`search.md`). A click on that line is inert.
+- A picker taller than the pane scrolls with the highlight.
 - `esc` returns to the view the send was issued from, the comments list and the find band included.
 
 ### Base picker
@@ -341,15 +342,15 @@ The filter is a text field with the comment editor's controls, above. `↑` and 
 
 `commit-pick` opens the picker over the body, like the base picker (`tui.md`). It works on the file tabs in every scope. Elsewhere it is inert and stays out of the footer. It is inert while the comment editor, the comments list, another picker, the search screen, or the find band is open, and the pick-name click with it.
 
-`scope-commits` with a pick switches straight to it. With no pick, or a `gone` pick, it opens the picker without switching scope, so `esc` leaves the previous scope active. The scope chip cycles `uncommitted`, `branch`, `last-turn`, `commits`, and its `commits` step does the same.
+`scope-commits` with a pick switches straight to it. With no pick, or a `gone` pick, it opens the picker without switching scope, so `esc` leaves the previous scope active. The scope chip cycles `uncommitted`, `branch`, `last-turn`, `commits`, and skips `commits` while there is no pick or the pick is `gone`, so a click never parks on the picker.
 
-The list holds one row per commit in the universe, newest first (`review-model.md`). A row reads `sha  subject  trail  author  age`. The subject is the one bright part. The trail is dim and `·`-joined, and it clips after the subject. The author is right-aligned to one column before the age, so the names scan as a column. The title names the universe: `commits · 6 over main`, or `commits · last 50` without a base. A pick that is not wholly in the list, `off branch` or below the base, is one row above the list, reading the pick as the header paints it.
+The list holds one row per commit in the universe, newest first (`review-model.md`). A row reads `sha  subject  trail  author  age`. The subject is the one bright part. The trail is dim and `·`-joined, and it clips after the subject. The author is right-aligned to one column before the age, so the names scan as a column. The title names the universe: `commits · 6 over main`, or `commits · last 50` when no base resolves, there is no merge-base, or the merge-base is `HEAD`. The header names the pick only in `commits`. The pick row paints it everywhere, without a verdict, since no other scope's build checks one. A pick that is not wholly in the list, `off branch` or below the base, is one row above the list, reading the pick as the header paints it.
 
 The trail carries, in this order:
 
 | token          | when                                                                 |
 | -------------- | -------------------------------------------------------------------- |
-| `✎ N`          | N comments in the store carry this commit as their `rev`             |
+| `✎ N`          | N comments in the store were made on a pick whose newest commit is this one |
 | `merge`        | the commit has two or more parents                                   |
 | one ref        | the first of: `pr` when the open PR's head is this commit (`forge-host.md`), a remote-tracking tip, a `tag: …`, another local branch |
 
@@ -367,7 +368,7 @@ The highlight opens on the current pick's newest commit, else the first row. A r
 │ ▎ 1a11436  Fix the end-to-end review findings                    claude  6h │
 │   896626a  Cut README detail  tag: v0.34.0                       dmitry  1d │
 │   ba82015  Add the commit scope spec                             dmitry  1d │
-└ j k move · v select · enter open 3 · esc ────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 | key                   | does                                                                  |
@@ -379,16 +380,16 @@ The highlight opens on the current pick's newest commit, else the first row. A r
 | `enter`               | pick the run from the anchor to the highlight, or the highlight alone |
 | `esc`                 | clear the anchor, else cancel                                         |
 
-Every other key is inert.
+Every other key is inert. `enter` and `esc` act with or without a modifier: nothing here is a send, so the chord guard the agent picker needs has no job.
 
 - The anchor may sit above or below the highlight. The run is the rows between them, inclusive.
 - The rows from the anchor to the highlight carry a bar.
-- The footer's `enter` hint counts the run.
+- The footer's `enter` hint counts a run of two or more, and `esc` reads `clear` with an anchor set, `cancel` without.
 - The pick row takes no anchor and sits outside every run. `v` on it is inert and the footer does not offer it. `enter` on it re-picks the same pick.
 - A click moves the highlight. A click on the highlighted row picks, the run included. Every other gesture is inert, and none reaches the view behind.
 - An unborn repository shows `no commits yet`. `enter` does nothing, and the footer offers `esc` alone.
 - A pick applies immediately: the scope switches to `commits`, the changeset rebuilds, and the header renames (`review-model.md`).
-- A picker taller than the pane scrolls with the highlight.
+- A picker taller than the pane scrolls with the highlight, and its last line reads `… N more` while rows remain below, like the search screen's clip (`search.md`). A click on that line is inert.
 
 ## Non-goals
 

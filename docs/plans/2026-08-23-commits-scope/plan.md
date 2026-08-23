@@ -16,7 +16,7 @@ A fourth scope, `commits`, diffs a picked run of commits `A^..B` from a popup pi
 - [ ] `enter` picks the highlighted commit. The scope switches to `commits`, `Changes` lists the files of `git diff A^ B`, the header reads `commits <sha> <subject>`, and both diff sides come from `git show`.
 - [ ] `v` anchors, movement draws a bar, the footer reads `enter pick N`, `enter` picks the run. The header reads `commits <a>..<b> (N)`. `esc` clears the anchor, a second `esc` closes.
 - [ ] Reopening on a run restores the anchor on the oldest and the highlight on the newest. Reopening on a single commit restores no anchor, so `k` `enter` steps.
-- [ ] `g` with a pick switches straight to it. `g`, the chip's `commits` step, and `G` with no pick open the picker without switching. `esc` leaves the previous scope active.
+- [ ] `g` with a pick switches straight to it. `g` and `G` with no pick open the picker without switching, and the chip skips `commits`. `esc` leaves the previous scope active.
 - [ ] `G` and `g` are inert on `PR`, while composing, in the comments list, in another picker, in search, and in find. `/`, `ctrl+f`, `q`, `1`–`3`, and every other key are inert inside the picker. Page keys move the highlight.
 - [ ] A pick with a commit unreachable from `HEAD` keeps painting, the header appends `· off branch`, and the picker shows it as one row above the list that takes no anchor. A base change marks nothing.
 - [ ] A pick with a pruned commit reads `commit <sha> is gone` in both panes, the header appends `· gone`, row 1 leads with `G pick commits`, and `g` opens the picker.
@@ -85,6 +85,7 @@ A fourth scope, `commits`, diffs a picked run of commits `A^..B` from a popup pi
 
 ## Replan
 
+- 2026-08-23: the chip's `commits` step reopened the picker on every click with no pick, a dead end for the mouse → the chip skips `commits` until a live pick exists → `specs/input.md` Commit picker.
 - If `git diff A^ B` rename detection differs from the worktree diffs in a way `assemble` cannot absorb, add `-M` explicitly and note it in `specs/review-model.md`.
 - If the poll-time reachability check for `off branch` costs more than one `merge-base --is-ancestor` per poll shows on the bench, compute it inside the world build only, never on the paint path.
 - 2026-08-23: initial plan.

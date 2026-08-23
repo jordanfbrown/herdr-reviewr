@@ -7,6 +7,7 @@
 //! live in `app.rs`.
 
 use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
@@ -1389,7 +1390,7 @@ fn pick_label(app: &App) -> Option<(String, String, String, String)> {
     // carries none, so the picker's pick row elsewhere paints the pick and what is fixed
     // by its shas (subject, count), never a verdict the world may have moved past.
     let verdict = status.map(|s| &s.verdict).filter(|_| app.scope == crate::model::Scope::Commits);
-    let gone = matches!(status.map(|s| &s.verdict), Some(PickVerdict::Gone(_)));
+    let gone = app.pick_gone();
     let tail = match verdict {
         Some(PickVerdict::OffBranch) => " · off branch".to_string(),
         Some(PickVerdict::Gone(_)) => " · gone".to_string(),
@@ -1505,8 +1506,10 @@ fn render_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
     let mut spans = tab_bar_spans(app);
     spans.push(Span::styled(chip, bar.fg(p.yellow).add_modifier(Modifier::BOLD)));
     if let Some((lead, name, tail)) = base {
-        // An empty lead is the `no base` state, worn as a warning; a resolved name wears the
-        // clickable accent, and the skipped tail warns beside it (`specs/tui.md`).
+        // An empty lead is the `no base` state, worn as a warning, except in `commits`,
+        // whose pick label always leaves the lead empty and is never a warning. A resolved
+        // name wears the clickable accent, and the skipped tail warns beside it
+        // (`specs/tui.md`).
         let warn = lead.is_empty() && app.scope != crate::model::Scope::Commits;
         spans.push(Span::styled(BASE_GAP, bar));
         spans.push(Span::styled(lead, bar.fg(p.dim2)));
@@ -2410,8 +2413,49 @@ fn render_composer(frame: &mut Frame, app: &App, area: Rect) {
     anchor_input_cursor(frame, inner, cursor_col, cursor_row - scroll);
 }
 
+/// A relative age label (`5m`, `2h`, `3d`, `2w`) from an ISO-8601 `…Z` timestamp, against `now`.
+/// `now` is injected so the formatting is testable; the UI passes `SystemTime::now()`.
+#[must_use]
+pub fn relative_age(created_at: &str, now: SystemTime) -> String {
+    let Some(then) = forge::parse_iso(created_at) else {
+        return String::new();
+    };
+    let now = now.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
+    age_label((now - then).max(0) as u64)
+}
+
+/// A compact age from a span in seconds: `30s`, `5m`, `2h`, `3d`, `6w`, `2y`. The one
+/// bucketing for the PR nav and the commit picker (`specs/input.md`).
+pub fn age_label(secs: u64) -> String {
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s / 60),
+        s if s < 86_400 => format!("{}h", s / 3600),
+        s if s < 604_800 => format!("{}d", s / 86_400),
+        s if s < 365 * 86_400 => format!("{}w", s / 604_800),
+        s => format!("{}y", s / (365 * 86_400)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+    #[test]
+    fn relative_age_buckets_by_magnitude() {
+        // now = 2026-06-27T12:00:00Z
+        let now = UNIX_EPOCH
+            + std::time::Duration::from_secs(
+                crate::forge::parse_iso("2026-06-27T12:00:00Z").unwrap() as u64,
+            );
+        assert_eq!(relative_age("2026-06-27T11:55:00Z", now), "5m");
+        assert_eq!(relative_age("2026-06-27T10:00:00Z", now), "2h");
+        assert_eq!(relative_age("2026-06-24T12:00:00Z", now), "3d");
+        assert_eq!(relative_age("2026-06-13T12:00:00Z", now), "2w");
+        assert_eq!(age_label(364 * 86_400), "52w");
+        assert_eq!(age_label(365 * 86_400), "1y");
+        assert_eq!(relative_age("garbage", now), "");
+    }
+
     use super::{box_rows, caret_rowcol, composer_caret_cell_position, single_line_caret_view};
 
     /// The production pairing: box rows built at the same width the caret maps against.
@@ -3250,7 +3294,7 @@ fn commit_row_parts(app: &App, cp: &crate::app::CommitPicker) -> Vec<CommitRowPa
                 subject: row.subject.clone(),
                 trail: trail.join(" · "),
                 author: row.author.clone(),
-                age: crate::forge::age_label(now.saturating_sub(row.time)),
+                age: age_label(now.saturating_sub(row.time)),
             }
         })
         .collect()
@@ -4249,7 +4293,7 @@ fn pr_comment_row(
     } else if cm.is_outdated {
         "outdated".to_string()
     } else {
-        forge::relative_age(&cm.created_at, now)
+        relative_age(&cm.created_at, now)
     };
     let author = format!("@{} ", cm.author);
     let budget = width.saturating_sub(author.width() + trailing.width() + 3).max(1);

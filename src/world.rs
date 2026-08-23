@@ -185,8 +185,8 @@ fn build_pick(repo: &Path, pick: &CommitPick) -> Result<(PickStatus, Vec<Changed
     let subject = git::commit_subject(repo, &pick.newest).unwrap_or_default();
     let count = git::run_length_from(repo, &old, &pick.oldest, &pick.newest).unwrap_or(0);
     let changed = git::changed_between(repo, &old, &pick.newest)?;
-    let verdict = if git::is_reachable(repo, &pick.newest) && git::is_reachable(repo, &pick.oldest)
-    {
+    // The oldest is an ancestor of the newest, so one reachability check covers the run.
+    let verdict = if git::is_reachable(repo, &pick.newest) {
         PickVerdict::Live
     } else {
         PickVerdict::OffBranch

@@ -72,7 +72,8 @@ State divides into three kinds:
 
 - Authored state is what the reviewer wrote: comments and the draft being typed.
 - Place state is where the reviewer's attention is: the active tab and scope, the open file, every
-  cursor and scroll, folds, a selection, the layout, the footer's shortcut expansion.
+  cursor and scroll, folds, a selection, the layout, the footer's shortcut expansion, the commit
+  pick and each picker's highlight and anchor.
 - Derived state is everything recomputed from git or the forge: changesets, trees, diffs, the PR
   snapshot.
 
