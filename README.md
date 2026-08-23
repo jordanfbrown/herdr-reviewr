@@ -181,11 +181,8 @@ links, and scroll with the wheel.
   `B` ([Base branch](#base-branch)).
 - **last turn** — everything that changed in this worktree since its most recent turn started
   ([Limitations](#limitations)).
-- **commits** — one commit, or a run of commits, picked with `G`. Both sides come from the
-  commits, so uncommitted edits stay out. In the picker, `enter` picks the highlighted commit.
-  `v` sets an anchor, and `enter` then picks every commit from the anchor to the highlight.
-  `G` reopens the picker on the current pick, so `k` `enter` steps to the next commit.
-  A comment made here stays on its commits, so it shows again when you pick them again.
+- **commits** — one commit, or a run of them, picked with `G`: review the branch commit by
+  commit, with the working tree out of the way.
 
 reviewr starts in **uncommitted**. `default_scope` changes that. Switching with `u`/`b`/`t`/`g`
 wins for the rest of the session. `g` without a pick opens the picker.
