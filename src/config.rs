@@ -364,6 +364,8 @@ fn parse_plugin_config(path: &Path) -> Result<PluginConfig, PluginConfigError> {
             "uncommitted" => crate::model::Scope::Uncommitted,
             "branch" => crate::model::Scope::Branch,
             "last-turn" => crate::model::Scope::LastTurn,
+            // `commits` needs a pick the pane does not yet hold, so it is not a start scope
+            // and falls to the error (specs/review-model.md Commit pick).
             _ => {
                 return Err(value_error(
                     path,
@@ -1000,11 +1002,11 @@ mod tests {
         use crate::keymap::{Action, Key};
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(&path, "[keybindings]\nlist-wider = [\"g\"]\nlist-narrower = [\"h\"]\n")
+        std::fs::write(&path, "[keybindings]\nlist-wider = [\"+\"]\nlist-narrower = [\"-\"]\n")
             .unwrap();
         let config = super::plugin_config_in(dir.path()).unwrap();
-        assert_eq!(config.keymap().action_for(Key::plain('g')), Some(Action::NavigatorGrow));
-        assert_eq!(config.keymap().action_for(Key::plain('h')), Some(Action::NavigatorShrink));
+        assert_eq!(config.keymap().action_for(Key::plain('+')), Some(Action::NavigatorGrow));
+        assert_eq!(config.keymap().action_for(Key::plain('-')), Some(Action::NavigatorShrink));
         let json = config.to_json();
         let bindings = json["keybindings"].as_object().unwrap();
         assert!(bindings.contains_key("navigator-grow"));

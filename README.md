@@ -105,8 +105,9 @@ The keys below are defaults. You can rebind every action, even to several keys a
 | Key | Action |
 | --- | --- |
 | `1` `2` `3` | Switch tab — Changes / All files / PR |
-| `u` `b` `t` | Switch scope — uncommitted / branch / last turn |
+| `u` `b` `t` `g` | Switch scope — uncommitted / branch / last turn / commits |
 | `B` | Pick the branch scope's base |
+| `G` | Pick the commits scope's commits |
 | `j` `k` · `↑` `↓` | Move cursor |
 | `]` `[` | Jump to next / previous hunk |
 | `f` `F` | Jump to next / previous file |
@@ -180,9 +181,13 @@ links, and scroll with the wheel.
   `B` ([Base branch](#base-branch)).
 - **last turn** — everything that changed in this worktree since its most recent turn started
   ([Limitations](#limitations)).
+- **commits** — one commit, or a run of commits, picked with `G`. Both sides come from the
+  commits, so uncommitted edits stay out. In the picker, `enter` picks the highlighted commit.
+  `v` sets an anchor, and `enter` then picks every commit from the anchor to the highlight.
+  `G` reopens the picker on the current pick, so `k` `enter` steps to the next commit.
 
-reviewr starts in **uncommitted**. `default_scope` changes that. Switching with `u`/`b`/`t`
-wins for the rest of the session.
+reviewr starts in **uncommitted**. `default_scope` changes that. Switching with `u`/`b`/`t`/`g`
+wins for the rest of the session. `g` without a pick opens the picker.
 
 Every scope respects `.gitignore`, so build output never clutters **Changes**. To review a file,
 track it. **All files** still browses any ignored path.
@@ -311,8 +316,8 @@ The action names and their defaults:
 | `down` / `up` | `j` / `k` |
 | `next-hunk` / `prev-hunk` | `]` / `[` |
 | `next-file` / `prev-file` | `f` / `F` |
-| `scope-uncommitted` / `scope-branch` / `scope-last-turn` | `u` / `b` / `t` |
-| `base-pick` | `B` |
+| `scope-uncommitted` / `scope-branch` / `scope-last-turn` / `scope-commits` | `u` / `b` / `t` / `g` |
+| `base-pick` / `commit-pick` | `B` / `G` |
 | `tab-changes` / `tab-all-files` / `tab-pr` | `1` / `2` / `3` |
 | `wrap` | `w` |
 | `preview` | `m` |
