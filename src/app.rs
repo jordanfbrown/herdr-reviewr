@@ -4095,6 +4095,11 @@ impl App {
                 return vec![(A::PickBaseRow, Primary), (A::ClosePicker, Do), (A::MoveBaseRow, Do)];
             }
             Mode::CommitPick => {
+                // An empty universe has nothing to open or move to, so only the exit is
+                // offered (`specs/input.md` Commit picker).
+                if self.commit_picker.as_ref().is_none_or(CommitPicker::is_empty) {
+                    return vec![(A::CloseCommitPicker, Primary)];
+                }
                 return vec![
                     (A::PickCommitRun, Primary),
                     (A::CloseCommitPicker, Do),

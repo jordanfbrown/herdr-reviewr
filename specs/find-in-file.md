@@ -83,7 +83,7 @@ While the band is open, polls keep running underneath (`overview.md`).
 | `↑`           | step to the previous match |
 | `esc`         | close, the cursor stays    |
 
-The band shows its own one-row footer, `↑↓ match` and `esc`, the arrows combined like the search screen's pick (`search.md`). In the review, `ctrl+f find` sits in the footer's `go` band wherever the band would open (`input.md`).
+The band shows its own one-row footer, `↑↓ move` and `esc`, the arrows combined like the search screen's (`search.md`). In the review, `ctrl+f find` sits in the footer's `go` band wherever the band would open (`input.md`).
 
 ## Non-goals
 

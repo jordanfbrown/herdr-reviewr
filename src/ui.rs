@@ -2500,7 +2500,7 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
             return ("tab".into(), if app.focus == Focus::Files { "diff" } else { "files" }.into());
         }
         A::Preview => (hint(K::Preview), if app.preview_active() { "source" } else { "preview" }),
-        A::NavigatorPosition => (hint(K::NavigatorPosition), "position"),
+        A::NavigatorPosition => (hint(K::NavigatorPosition), "layout"),
         A::NavigatorHide => {
             (hint(K::NavigatorHide), if app.navigator_hidden_here() { "show" } else { "hide" })
         }
@@ -2515,7 +2515,7 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
             "scope",
         ),
         A::Send => return (hint(K::Send), format!("send {}", app.store.len())),
-        A::List => (hint(K::Comments), "list"),
+        A::List => (hint(K::Comments), "comments"),
         A::Copy => (hint(K::Copy), "copy"),
         A::Save => ("enter".into(), "save"),
         A::Newline => ("shift+enter".into(), "newline"),
@@ -2525,19 +2525,19 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
         // The digits are literal, so they are spelled; the two movement keys are bound, so they
         // read off the keymap like every other hint (`specs/input.md`).
         A::MovePickerRow => (format!("1-9 {} {}", hint(K::Down), hint(K::Up)), "move"),
-        A::BasePick => (hint(K::BasePick), "pick base"),
-        A::CommitPick => (hint(K::CommitPick), "pick commits"),
+        A::BasePick => (hint(K::BasePick), "base"),
+        A::CommitPick => (hint(K::CommitPick), "commits"),
         A::PickCommitRun => {
             let n = app.commit_picker.as_ref().map_or(0, crate::app::CommitPicker::run_len);
-            return ("enter".into(), if n > 1 { format!("pick {n}") } else { "pick".into() });
+            return ("enter".into(), if n > 1 { format!("open {n}") } else { "open".into() });
         }
         A::MoveCommitRow => (format!("{} {}", hint(K::Down), hint(K::Up)), "move"),
-        A::CommitAnchor => (hint(K::Select), "anchor"),
+        A::CommitAnchor => (hint(K::Select), "select"),
         A::CloseCommitPicker => {
             let anchored = app.commit_picker.as_ref().is_some_and(|cp| cp.anchor.is_some());
             ("esc".into(), if anchored { "clear" } else { "cancel" })
         }
-        A::PickBaseRow => ("enter".into(), "pick"),
+        A::PickBaseRow => ("enter".into(), "open"),
         // Every printable is filter text in the base picker, so only the arrows move
         // (`specs/input.md` Base picker).
         A::MoveBaseRow => ("↑↓".into(), "move"),
@@ -2557,15 +2557,15 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
         }
         A::Search => (hint(K::Search), "search"),
         A::Find => (hint(K::Find), "find"),
-        A::Wrap => (hint(K::Wrap), "wrap"),
-        A::FindStep => ("↑↓".into(), "match"),
+        A::Wrap => (hint(K::Wrap), if app.wrap { "unwrap" } else { "wrap" }),
+        A::FindStep => ("↑↓".into(), "move"),
         A::FlipSearchMode => {
             // The label names the destination mode: `code` from Files, `files` from Code.
             let to_code =
                 app.search.as_ref().is_none_or(|s| s.search_mode == crate::app::SearchMode::Files);
             return ("tab".into(), if to_code { "code" } else { "files" }.into());
         }
-        A::PickResult => ("↑↓".into(), "pick"),
+        A::PickResult => ("↑↓".into(), "move"),
         A::OpenResult => ("enter".into(), "open"),
         A::OpenPr => (hint(K::OpenPr), "open ↗"),
         A::Refresh => (hint(K::Refresh), "refresh"),

@@ -582,12 +582,12 @@ fn a_hidden_navigator_gives_the_read_pane_the_whole_body() {
     app.toggle_keys();
     let out = render(&app);
     assert!(out.contains("z show"), "row 1 keeps the way back in the expansion");
-    assert!(!out.contains("p position"), "`p position` drops while hidden");
+    assert!(!out.contains("p layout"), "`p layout` drops while hidden");
 
     app.toggle_navigator_hidden();
     let out = render(&app);
     assert!(out.contains("z hide"), "visible, the `go` band lists the hide key");
-    assert!(out.contains("p position"), "`p position` returns with the navigator");
+    assert!(out.contains("p layout"), "`p layout` returns with the navigator");
 }
 
 #[test]
@@ -2356,7 +2356,7 @@ mod search_screen_render {
         assert!(out.contains("… more"), "a clipped list marks that there is more");
         assert!(out.contains("─ results"), "the results pane carries a titled rule");
         assert!(out.contains("─ preview"), "the divider row carries the preview title");
-        assert!(out.contains("pick") && out.contains("open"), "the screen's footer shows");
+        assert!(out.contains("↑↓ move") && out.contains("enter open"), "the screen's footer shows");
 
         // Code mode: grouped rows under a header, `line:` locators, the clip.
         key(&mut app, KeyCode::Tab);
@@ -3359,7 +3359,7 @@ fn without_a_resolving_base_the_header_reads_no_base() {
     let frame = render(&app);
     let line0 = frame.lines().next().unwrap().to_string();
     assert!(line0.contains("[branch] no base"), "the empty state is named: {line0}");
-    assert!(frame.contains("pick base"), "the footer advertises the picker");
+    assert!(frame.contains("B base"), "the footer advertises the picker");
 }
 
 #[test]
@@ -3634,8 +3634,8 @@ fn the_commit_picker_paints_rows_a_run_bar_and_its_count() {
         "the root is outside the run"
     );
     let footer = footer_line(&out);
-    assert!(footer.contains("enter pick 3"), "the footer counts the run: {footer}");
-    assert!(footer.contains("v anchor") && footer.contains("esc clear"), "{footer}");
+    assert!(footer.contains("enter open 3"), "the footer counts the run: {footer}");
+    assert!(footer.contains("v select") && footer.contains("esc clear"), "{footer}");
     // The footer stays bright, the view behind recedes.
     let plain = {
         let mut a = app_on(&r);
@@ -3655,10 +3655,10 @@ fn the_commit_picker_paints_rows_a_run_bar_and_its_count() {
         "the header is scrimmed"
     );
 
-    // Without an anchor the hint is a plain `pick` and `esc` cancels.
+    // Without an anchor the hint is a plain `open` and `esc` cancels.
     app.commit_picker_escape();
     let footer = footer_line(&render(&app));
-    assert!(footer.contains("enter pick") && !footer.contains("pick 3"), "{footer}");
+    assert!(footer.contains("enter open") && !footer.contains("open 3"), "{footer}");
     assert!(footer.contains("esc cancel"), "{footer}");
     // A click on a row moves the highlight, a click on the highlight picks.
     let row_y = (0..40u16)
@@ -3694,13 +3694,13 @@ fn the_commits_header_names_the_pick_and_its_verdict() {
     assert!(!cols.is_empty(), "the pick name is a header hit");
     let footer = footer_line(&render(&app));
     assert!(
-        !footer.contains("G pick commits"),
+        !footer.contains("G commits"),
         "row 1 never carries the picker key while picking works"
     );
     app.keys_expanded = true;
     let expanded = render(&app);
     assert!(expanded.contains("u/b/t/g scope"), "the go band names four scopes:\n{expanded}");
-    assert!(expanded.contains("G pick commits"), "and the picker key:\n{expanded}");
+    assert!(expanded.contains("G commits"), "and the picker key:\n{expanded}");
     app.keys_expanded = false;
 
     // A run paints `a..b (N)`.
@@ -3751,10 +3751,7 @@ fn the_commits_header_names_the_pick_and_its_verdict() {
         "both panes:\n{out}"
     );
     let footer = footer_line(&out);
-    assert!(
-        footer.starts_with(" G pick commits") || footer.trim_start().starts_with("G pick commits"),
-        "{footer}"
-    );
+    assert!(footer.trim_start().starts_with("G commits"), "{footer}");
     assert!(footer.contains("u/b/t scope"), "the other three scopes: {footer}");
 }
 
@@ -3766,6 +3763,11 @@ fn an_empty_universe_names_itself() {
     assert_eq!(app.mode, Mode::CommitPick);
     let out = render(&app);
     assert!(out.contains("no commits yet"), "{out}");
+    let footer = footer_line(&out);
+    assert!(
+        footer.contains("esc cancel") && !footer.contains("enter"),
+        "only the exit offers: {footer}"
+    );
     app.commit_picker_pick().unwrap();
     assert_eq!(app.mode, Mode::CommitPick, "enter does nothing");
     app.close_commit_picker();

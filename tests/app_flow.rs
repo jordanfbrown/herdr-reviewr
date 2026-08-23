@@ -1894,7 +1894,7 @@ fn footer_swaps_the_hide_key_between_go_and_row_one() {
     );
     assert!(
         !bands.iter().any(|&(a, _)| a == FooterAction::NavigatorPosition),
-        "`p position` drops while hidden"
+        "`p layout` drops while hidden"
     );
 
     app.set_tab(herdr_reviewr::app::Tab::Pr).unwrap();

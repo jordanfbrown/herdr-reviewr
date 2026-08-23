@@ -173,8 +173,8 @@ right of the `do` row.
 
 ```
  do    e edit · d delete · n/N jump · s send 2                                ?
- go    u/b/t/g scope · / search · ctrl+f find · w wrap · l list · y copy · r refresh · 1·2·3 tabs
-       tab files · p position · z hide · q quit
+ go    u/b/t/g scope · / search · ctrl+f find · w wrap · l comments · y copy · r refresh · 1·2·3 tabs
+       tab files · p layout · z hide · q quit
  move  j k · ] [ hunk · f F file · PageUp PageDown
 ```
 
@@ -234,8 +234,8 @@ Row 1's primary and actions follow the cursor:
 | a collapsed directory                   | `→ expand`                    | `z hide`                             |
 | an expanded directory                   | `← collapse`                  | `z hide`                             |
 | nothing to review (awaiting turn)       | `u/b/t/g scope`               | `r refresh`                          |
-| the `branch` scope with no base         | `B pick base`                 | `u/t/g scope · r refresh`            |
-| a `gone` commit pick                    | `G pick commits`              | `u/b/t scope · r refresh`            |
+| the `branch` scope with no base         | `B base`                      | `u/t/g scope · r refresh`            |
+| a `gone` commit pick                    | `G commits`                   | `u/b/t scope · r refresh`            |
 | an empty read pane, navigator hidden    | `z show`                      | `tab files · e edit file`            |
 
 - An armed crossing outranks the cursor's own action and leads row 1, since only the footer says the next press leaves the file. It is the one movement key on row 1 (see Changeset traversal). While it is armed, the `move` band drops the hunk step, whose key row 1 now shows.
@@ -356,7 +356,7 @@ The highlight opens on the current pick's newest commit, else the first row. A r
 │   1a11436  Fix the end-to-end review findings     6h  │ │
 │   896626a  Cut README detail                      1d    │
 │   ba82015  Add the commit scope spec              1d    │
-└ j k move · v anchor · enter pick 3 · esc ───────────────┘
+└ j k move · v select · enter open 3 · esc ───────────────┘
 ```
 
 | key                   | does                                                                  |
@@ -375,7 +375,7 @@ Every other key is inert.
 - The footer's `enter` hint counts the run.
 - The pick row takes no anchor and sits outside every run. `v` on it is inert. `enter` on it re-picks the same pick.
 - A click moves the highlight. A click on the highlighted row picks, the run included. Every other gesture is inert, and none reaches the view behind.
-- An empty universe shows `no commits over main`, or `no commits yet` in an unborn repository. `enter` does nothing.
+- An empty universe shows `no commits over main`, or `no commits yet` in an unborn repository. `enter` does nothing, and the footer offers `esc` alone.
 - A pick applies immediately: the scope switches to `commits`, the changeset rebuilds, and the header renames (`review-model.md`).
 - A picker taller than the pane scrolls with the highlight.
 

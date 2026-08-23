@@ -28,7 +28,7 @@ above a full-width live preview. `tab` flips between the two search modes, keepi
 │ │ 41 ▌   from .z import w                                                 │ │
 │ │ 42     return registry[name]                                            │ │
 │ └─────────────────────────────────────────────────────────────────────────┘ │
-│ tab files · ↑↓ pick · enter open · esc close                                 │
+│ tab files · ↑↓ move · enter open · esc close                                 │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
