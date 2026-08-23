@@ -106,7 +106,7 @@ The keys below are defaults. You can rebind every action, even to several keys a
 | --- | --- |
 | `1` `2` `3` | Switch tab — Changes / All files / PR |
 | `u` `b` `t` `g` | Switch scope — uncommitted / branch / last turn / commits |
-| `B` | Pick the base branch (switches to branch) |
+| `B` | Pick the base branch |
 | `G` | Pick the commits to review |
 | `j` `k` · `↑` `↓` | Move cursor |
 | `]` `[` | Jump to next / previous hunk |
@@ -181,8 +181,8 @@ links, and scroll with the wheel.
   `B` ([Base branch](#base-branch)).
 - **last turn** — everything that changed in this worktree since its most recent turn started
   ([Limitations](#limitations)).
-- **commits** — one commit, or a run of them, picked with `G`: review the branch commit by
-  commit, with the working tree out of the way.
+- **commits** — one commit, or several in a row, picked with `G`. Read what the agent
+  committed one step at a time, without its unsaved edits mixed in.
 
 reviewr starts in **uncommitted**. `default_scope` changes that. Switching with `u`/`b`/`t`/`g`
 wins for the rest of the session. `g` without a pick opens the picker.
