@@ -3763,6 +3763,58 @@ fn the_commits_header_names_the_pick_and_its_verdict() {
 }
 
 #[test]
+fn a_gone_run_paints_no_count_and_a_verdict_paints_only_in_commits() {
+    let (r, mut app, shas) = commits_app();
+    app.open_commit_picker();
+    app.commit_picker_anchor();
+    app.commit_picker_move(1);
+    app.commit_picker_pick().unwrap();
+    let line0 = render(&app).lines().next().unwrap().to_string();
+    assert!(line0.contains("(2)"), "{line0}");
+    // Rewrite the tip: the run is off branch, and the header says so in `commits` only.
+    r.git(&["reset", "-q", "--hard", &shas[1]]);
+    r.write("three.rs", "rewritten\n");
+    r.commit_all("three again");
+    common::land_world(&mut app);
+    assert!(render(&app).lines().next().unwrap().contains("· off branch"));
+    app.set_scope(Scope::Uncommitted).unwrap();
+    app.open_commit_picker();
+    let out = render(&app);
+    let pick_line = out.lines().find(|l| l.contains("..")).expect("the pick row");
+    assert!(pick_line.contains("(2)") && !pick_line.contains("off branch"), "{pick_line}");
+    app.close_commit_picker();
+    // Pruned: no count beside `· gone`.
+    app.set_scope(Scope::Commits).unwrap();
+    r.git(&["reflog", "expire", "--expire=now", "--all"]);
+    r.git(&["gc", "-q", "--prune=now"]);
+    common::land_world(&mut app);
+    let line0 = render(&app).lines().next().unwrap().to_string();
+    assert!(line0.contains("· gone") && !line0.contains("(0)"), "{line0}");
+}
+
+#[test]
+fn a_wide_glyph_author_keeps_the_age_column() {
+    let (r, mut app, _) = commits_app();
+    r.write("four.rs", "4\n");
+    r.git(&["add", "-A"]);
+    r.git(&["commit", "-q", "-m", "four", "--author=田中太郎 <t@example.com>"]);
+    app.open_commit_picker();
+    let out = render(&app);
+    let ages: Vec<usize> = out
+        .lines()
+        .skip(1)
+        .filter(|l| l.contains("  ") && (l.contains("Test") || l.contains("田")))
+        // The test backend dumps one char per cell, so a char index is a column.
+        .map(|l| {
+            let cells: Vec<char> = l.trim_end_matches([' ', '│']).chars().collect();
+            cells.iter().rposition(|c| *c == ' ').unwrap()
+        })
+        .collect();
+    assert!(out.contains("田"), "{out}");
+    assert!(ages.len() >= 2 && ages.iter().all(|&a| a == ages[0]), "ages align:\n{out}");
+}
+
+#[test]
 fn the_picker_trail_counts_comments_and_a_tall_list_says_more() {
     let (r, mut app, shas) = commits_app();
     // A comment on `two`.
@@ -3817,14 +3869,15 @@ fn an_empty_universe_names_itself() {
     assert_eq!(app.mode, Mode::CommitPick, "enter does nothing");
     app.close_commit_picker();
 
+    // On the base branch itself the range is empty, so the universe is the last 50.
     r.write("a.rs", "a\n");
     r.commit_all("init");
     r.set_origin_default("main", "main");
     let mut app = app_on(&r);
     app.open_commit_picker();
     let out = render(&app);
-    assert!(out.contains("commits · 0 over main"), "{out}");
-    assert!(out.contains("no commits over main"), "{out}");
+    assert!(out.contains("commits · last 50"), "{out}");
+    assert!(out.contains("init"), "{out}");
 }
 
 #[test]

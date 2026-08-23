@@ -1645,7 +1645,7 @@ impl App {
     /// newest commit in `commits`, the worktree everywhere else.
     fn current_rev(&self) -> Rev {
         match (self.scope, &self.commit_pick) {
-            (Scope::Commits, Some(pick)) => Rev::Commit(pick.newest.clone()),
+            (Scope::Commits, Some(pick)) => Rev::Commit(pick.clone()),
             _ => Rev::Worktree,
         }
     }
@@ -3177,7 +3177,18 @@ impl App {
             && self.focus == Focus::Diff
             && !self.preview_active()
             && self.select_anchor.is_none();
-        (self.mode == Mode::List || on_the_diff) && self.target_comment().is_some()
+        (self.list_comment_editable() || on_the_diff) && self.target_comment().is_some()
+    }
+
+    /// Whether the list's highlighted comment can be edited here: only while the active
+    /// scope reads the diff it was made on, so the edit box opens over its card and never
+    /// over a same-numbered line of another revision (`specs/input.md` Edit).
+    fn list_comment_editable(&self) -> bool {
+        self.mode == Mode::List
+            && self
+                .store
+                .get(self.list_cursor)
+                .is_some_and(|c| !c.diff_anchored || c.rev == self.current_rev())
     }
 
     /// Whether `edit` opens a file here. The branch [`Self::start_edit`] takes, asked by the
@@ -3216,7 +3227,8 @@ impl App {
             // was opened by path rather than by row. A preview paints no numbered rows, and
             // in `commits` the numbers belong to the picked commit, not the worktree file
             // the editor opens, so both open the file at its start (`specs/input.md` Edit).
-            (self.diff_path.clone()?, !self.preview_active() && self.scope != Scope::Commits)
+            let commit_diff = self.scope == Scope::Commits && self.diff.view == View::Diff;
+            (self.diff_path.clone()?, !self.preview_active() && !commit_diff)
         };
         // The nearest row at or above the cursor carrying a worktree line number. A deletion
         // and a fold carry none, and a notice diff paints no rows at all, so each falls back
@@ -4090,13 +4102,13 @@ impl App {
                 return vec![(A::Save, Primary), (A::Cancel, Do), (A::Newline, Do)];
             }
             Mode::List => {
-                return vec![
-                    (A::Send, Primary),
-                    (A::CloseList, Do),
-                    (A::Copy, Do),
-                    (A::EditComment, Do),
-                    (A::DeleteComment, Do),
-                ];
+                let mut out = vec![(A::Send, Primary), (A::CloseList, Do), (A::Copy, Do)];
+                // A comment from another diff cannot be edited here (`specs/input.md` Edit).
+                if self.list_comment_editable() {
+                    out.push((A::EditComment, Do));
+                }
+                out.push((A::DeleteComment, Do));
+                return out;
             }
             Mode::Picker => {
                 return vec![(A::PickAgent, Primary), (A::ClosePicker, Do), (A::MovePickerRow, Do)];
@@ -4110,12 +4122,16 @@ impl App {
                 if self.commit_picker.as_ref().is_none_or(CommitPicker::is_empty) {
                     return vec![(A::CloseCommitPicker, Primary)];
                 }
-                return vec![
+                let mut out = vec![
                     (A::PickCommitRun, Primary),
                     (A::CloseCommitPicker, Do),
                     (A::MoveCommitRow, Do),
-                    (A::CommitAnchor, Do),
                 ];
+                // The pick row takes no anchor, so `v` is not offered on it.
+                if self.commit_picker.as_ref().is_some_and(|cp| !cp.is_pick_row(cp.cursor)) {
+                    out.push((A::CommitAnchor, Do));
+                }
+                return out;
             }
             Mode::Search => {
                 // With nothing pickable — warming, errored, or no matches — only the
@@ -4447,12 +4463,21 @@ impl App {
             .collect();
         // A stable sort, so recency still orders the promoted pair and the rest alike.
         rows.sort_by_key(|r| (!r.starred(), !r.is_default()));
-        if let Some(git::ResolvedBase::Rev { spelling, oid }) = &self.branch_base.winner
+        // The base is re-resolved here, not read from `branch_base`: that lands only while
+        // `branch` is showing, and the picker opens from every scope (`specs/input.md`).
+        let winner = match git::resolve_base(&self.repo, self.base.as_deref()) {
+            Ok(r) => r.status.winner,
+            Err(e) => {
+                self.status = e.0;
+                return;
+            }
+        };
+        if let Some(git::ResolvedBase::Rev { spelling, oid }) = &winner
             && !rows.iter().any(|r| r.name() == spelling)
         {
             rows.insert(0, BaseChoice::Rev { name: spelling.clone(), oid: oid.clone() });
         }
-        let current = self.branch_base.winner.as_ref().map(git::ResolvedBase::name);
+        let current = winner.as_ref().map(git::ResolvedBase::name);
         let cursor = current.and_then(|c| rows.iter().position(|r| r.name() == c)).unwrap_or(0);
         self.base_picker = Some(BasePicker {
             rows,
@@ -4570,16 +4595,18 @@ impl App {
             .map_err(|e| e.0)?
             .status
             .winner
-            .and_then(|b| git::merge_base(&self.repo, b.oid()).map(|mb| (b, mb)));
+            .and_then(|b| git::merge_base(&self.repo, b.oid()).map(|mb| (b, mb)))
+            // On the base branch itself the range is empty: the last 50 is the universe.
+            .filter(|(_, mb)| git::head_oid(&self.repo).as_deref() != Some(mb.as_str()));
         let rows = git::list_commits(&self.repo, base.as_ref().map(|(_, mb)| mb.as_str()))
             .map_err(|e| e.to_string())?;
-        let (title, empty) = match &base {
-            Some((b, _)) => (
-                format!("commits · {} over {}", rows.len(), b.name()),
-                format!("no commits over {}", b.name()),
-            ),
-            None => ("commits · last 50".to_string(), "no commits yet".to_string()),
+        // A base with a merge-base behind `HEAD` always lists something, so the only empty
+        // universe is an unborn repository.
+        let title = match &base {
+            Some((b, _)) => format!("commits · {} over {}", rows.len(), b.name()),
+            None => "commits · last 50".to_string(),
         };
+        let empty = "no commits yet".to_string();
         let head = git::head_oid(&self.repo);
         Ok(CommitPicker { rows, pick_row: None, cursor: 0, anchor: None, title, empty, head })
     }
@@ -4670,12 +4697,18 @@ impl App {
             fresh.index_of(sha)
         };
         let last = fresh.len().saturating_sub(1);
-        // Identity first, then the nearest surviving row, then clamp (`specs/overview.md`).
-        let cursor = relocate(old.cursor).unwrap_or(old.cursor.min(last));
-        let anchor = old
-            .anchor
-            .map(|a| relocate(a).unwrap_or(a.min(last)))
-            .filter(|&a| !fresh.is_pick_row(a));
+        // Identity first, then the nearest surviving neighbour (the one above wins a tie),
+        // then clamp (`specs/overview.md`).
+        let place = |i: usize| -> usize {
+            if let Some(at) = relocate(i) {
+                return at;
+            }
+            (1..old.len())
+                .find_map(|d| i.checked_sub(d).and_then(relocate).or_else(|| relocate(i + d)))
+                .unwrap_or(i.min(last))
+        };
+        let cursor = place(old.cursor);
+        let anchor = old.anchor.map(place).filter(|&a| !fresh.is_pick_row(a));
         fresh.cursor = cursor;
         fresh.anchor = anchor;
         self.commit_picker = Some(fresh);

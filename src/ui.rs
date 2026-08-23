@@ -1385,7 +1385,12 @@ fn pick_label(app: &App) -> Option<(String, String, String, String)> {
     use crate::world::PickVerdict;
     let pick = app.commit_pick.as_ref()?;
     let status = app.pick_status.as_ref();
-    let tail = match status.map(|s| &s.verdict) {
+    // The verdict is current only while `commits` is showing: every other scope's build
+    // carries none, so the picker's pick row elsewhere paints the pick and what is fixed
+    // by its shas (subject, count), never a verdict the world may have moved past.
+    let verdict = status.map(|s| &s.verdict).filter(|_| app.scope == crate::model::Scope::Commits);
+    let gone = matches!(status.map(|s| &s.verdict), Some(PickVerdict::Gone(_)));
+    let tail = match verdict {
         Some(PickVerdict::OffBranch) => " · off branch".to_string(),
         Some(PickVerdict::Gone(_)) => " · gone".to_string(),
         Some(PickVerdict::Live) | None => String::new(),
@@ -1397,7 +1402,7 @@ fn pick_label(app: &App) -> Option<(String, String, String, String)> {
     };
     let marker = match status {
         Some(s) if pick.is_single() && !s.subject.is_empty() => format!(" {}", s.subject),
-        _ if pick.is_single() => String::new(),
+        _ if pick.is_single() || gone => String::new(),
         _ => format!(" ({})", status.map_or(0, |s| s.count)),
     };
     Some((String::new(), shown, marker, tail))
@@ -3214,8 +3219,8 @@ struct CommitRowParts {
 fn commit_row_parts(app: &App, cp: &crate::app::CommitPicker) -> Vec<CommitRowParts> {
     let mut comments: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for c in app.store.iter() {
-        if let crate::model::Rev::Commit(sha) = &c.rev {
-            *comments.entry(sha.as_str()).or_default() += 1;
+        if let crate::model::Rev::Commit(pick) = &c.rev {
+            *comments.entry(pick.newest.as_str()).or_default() += 1;
         }
     }
     let now = now_unix();
@@ -3356,14 +3361,17 @@ fn render_commit_picker(frame: &mut Frame, app: &App, area: Rect) {
                 format!("  {}", truncate_width(trail, room - 2))
             };
             let author = truncate_width(author, author_w);
-            let pad = width.saturating_sub(fixed + subject.width() + trail.width()) + 2;
+            // Padding counts cells, not chars: a wide-glyph author takes its width.
+            let pad = width.saturating_sub(fixed + subject.width() + trail.width())
+                + 2
+                + author_w.saturating_sub(author.width());
             let spans = vec![
                 Span::styled(format!("{bar} "), Style::default().fg(p.yellow)),
                 Span::styled(format!("{sha:<COMMIT_SHA_W$}  "), Style::default().fg(p.blue)),
                 Span::styled(subject, text_style(p)),
                 Span::styled(trail, Style::default().fg(p.dim2)),
                 Span::styled(
-                    format!("{}{author:>author_w$}  {age:>COMMIT_AGE_W$}", " ".repeat(pad)),
+                    format!("{}{author}  {age:>COMMIT_AGE_W$}", " ".repeat(pad)),
                     Style::default().fg(p.dim2),
                 ),
             ];

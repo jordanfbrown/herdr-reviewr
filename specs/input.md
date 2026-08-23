@@ -119,21 +119,21 @@ nothing.
 The following table is every state `edit` can be pressed in. A state it does not name is a
 state nobody decided.
 
-| cursor on                                  | `edit` opens                                                                          |
-| ------------------------------------------ | ------------------------------------------------------------------------------------- |
-| a commented line, card on screen           | that comment, for editing                                                             |
-| any other read-pane line                   | the open file at that line                                                            |
-| a deletion or a fold                       | the open file at the nearest numbered line above                                      |
-| a markdown preview                         | the open file at line 1                                                               |
-| a `commits` diff                           | the open file at line 1, its numbers are the commit's                                 |
-| a diff with no rows                        | the open file at line 1                                                               |
-| a file row in the navigator                | that file at line 1                                                                   |
-| a directory row                            | nothing                                                                               |
-| a live line selection on the diff          | nothing                                                                               |
-| the comments list                          | the highlighted comment, for editing. The cursor moves to it only while it is in view |
-| the comment editor, find band, or a picker | nothing, the key is theirs                                                            |
-| the search screen                          | nothing, the key types into the query                                                 |
-| the `PR` tab                               | nothing, it names no file                                                             |
+| cursor on                                  | `edit` opens                                                                |
+| ------------------------------------------ | --------------------------------------------------------------------------- |
+| a commented line, card on screen           | that comment, for editing                                                   |
+| any other read-pane line                   | the open file at that line                                                  |
+| a deletion or a fold                       | the open file at the nearest numbered line above                            |
+| a markdown preview                         | the open file at line 1                                                     |
+| a `commits` diff                           | the open file at line 1, its numbers are the commit's                       |
+| a diff with no rows                        | the open file at line 1                                                     |
+| a file row in the navigator                | that file at line 1                                                         |
+| a directory row                            | nothing                                                                     |
+| a live line selection on the diff          | nothing                                                                     |
+| the comments list                          | the highlighted comment, when the active scope reads its diff, else nothing |
+| the comment editor, find band, or a picker | nothing, the key is theirs                                                  |
+| the search screen                          | nothing, the key types into the query                                       |
+| the `PR` tab                               | nothing, it names no file                                                   |
 
 The footer offers `e edit file` exactly on the rows that open a file, and never elsewhere. Whether the file is still on disk is the press's question, not the footer's.
 
@@ -384,9 +384,9 @@ Every other key is inert.
 - The anchor may sit above or below the highlight. The run is the rows between them, inclusive.
 - The rows from the anchor to the highlight carry a bar.
 - The footer's `enter` hint counts the run.
-- The pick row takes no anchor and sits outside every run. `v` on it is inert. `enter` on it re-picks the same pick.
+- The pick row takes no anchor and sits outside every run. `v` on it is inert and the footer does not offer it. `enter` on it re-picks the same pick.
 - A click moves the highlight. A click on the highlighted row picks, the run included. Every other gesture is inert, and none reaches the view behind.
-- An empty universe shows `no commits over main`, or `no commits yet` in an unborn repository. `enter` does nothing, and the footer offers `esc` alone.
+- An unborn repository shows `no commits yet`. `enter` does nothing, and the footer offers `esc` alone.
 - A pick applies immediately: the scope switches to `commits`, the changeset rebuilds, and the header renames (`review-model.md`).
 - A picker taller than the pane scrolls with the highlight.
 

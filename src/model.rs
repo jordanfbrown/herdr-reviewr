@@ -65,13 +65,14 @@ impl CommitPick {
     }
 }
 
-/// Where a comment's new side was read: the worktree, or the commit it came from. A diff
-/// comment renders only while the active scope reads its new side from the same place
-/// (specs/review-model.md File content).
+/// Where a comment's diff was read: the worktree, or the picked run it came from. A diff
+/// comment renders only while the active scope reads the same diff, both sides: a run and
+/// its newest commit alone share a new side but not an old one (specs/review-model.md File
+/// content).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Rev {
     Worktree,
-    Commit(String),
+    Commit(CommitPick),
 }
 
 /// How a file changed within a scope.

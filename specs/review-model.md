@@ -20,7 +20,7 @@ The central object is a comment: a note on a run of diff lines in one file, carr
 | `end`   | last line of the range, equal to `start` for a single line       |
 | `lines` | the verbatim diff lines, each keeping its `+`/`-`/space marker   |
 | `text`  | free-form reviewer text, possibly multi-line                     |
-| `rev`   | where the new side was read: `worktree`, or the commit it came from |
+| `rev`   | the diff it was made on: `worktree`, or the picked run               |
 
 Every field is required.
 
@@ -89,10 +89,10 @@ The `commits` scope diffs a picked run of commits, oldest `A` to newest `B`, as 
 
 The picker's universe is the branch over its base, along the first-parent walk from `HEAD`, so any contiguous run of rows is one ancestor chain. A side branch's commits sit behind their merge row, never as rows of their own.
 
-| base                       | commits listed                                   |
-| -------------------------- | ------------------------------------------------ |
-| resolves, has a merge-base | `merge-base..HEAD`, newest first                 |
-| none, or no merge-base     | the last 50 reachable from `HEAD`, newest first  |
+| base                                  | commits listed                                   |
+| ------------------------------------- | ------------------------------------------------ |
+| resolves, merge-base behind `HEAD`    | `merge-base..HEAD`, newest first                 |
+| none, no merge-base, or `HEAD` itself | the last 50 reachable from `HEAD`, newest first  |
 
 ### Ignored paths
 
@@ -129,7 +129,7 @@ The selected file's structured diff, built from its old and new content (`diff-v
 
 In `All files` a comment anchors to plain file content instead of a diff. Its `side` is `new`, its `rev` is `worktree`, its range is line numbers in the current file, and its snippet lines are space-prefixed like context lines. It exports identically to a diff comment.
 
-A comment renders and is acted on only in the view it belongs to: a content comment in `All files`, a diff comment in `Changes`. A diff comment renders only while the active scope reads its new side from the comment's `rev`, so a comment on a commit's diff never lands on a worktree line, and a worktree comment renders under every worktree scope. Send, Copy, and the comments list carry the whole set across both tabs and every scope.
+A comment renders and is acted on only in the view it belongs to: a content comment in `All files`, a diff comment in `Changes`. A diff comment renders only while the active scope reads the diff named by its `rev`, so a comment on a run's diff never lands on a worktree line, nor on another run's, and a worktree comment renders under every worktree scope. Send, Copy, and the comments list carry the whole set across both tabs and every scope.
 
 ## Behavior
 

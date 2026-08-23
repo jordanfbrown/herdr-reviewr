@@ -183,7 +183,7 @@ fn build_pick(repo: &Path, pick: &CommitPick) -> Result<(PickStatus, Vec<Changed
         return Ok(gone(&old));
     }
     let subject = git::commit_subject(repo, &pick.newest).unwrap_or_default();
-    let count = git::run_length(repo, &pick.oldest, &pick.newest).unwrap_or(0);
+    let count = git::run_length_from(repo, &old, &pick.oldest, &pick.newest).unwrap_or(0);
     let changed = git::changed_between(repo, &old, &pick.newest)?;
     let verdict = if git::is_reachable(repo, &pick.newest) && git::is_reachable(repo, &pick.oldest)
     {

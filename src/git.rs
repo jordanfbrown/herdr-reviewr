@@ -1305,10 +1305,16 @@ pub fn is_reachable(repo: &Path, sha: &str) -> bool {
 /// How many commits `oldest..=newest` spans along the first-parent walk from `newest`
 /// (`specs/tui.md`). `None` when either end is missing, or `oldest` is not behind `newest`.
 pub fn run_length(repo: &Path, oldest: &str, newest: &str) -> Option<usize> {
+    let old = parent_or_empty(repo, oldest)?;
+    run_length_from(repo, &old, oldest, newest)
+}
+
+/// [`run_length`] with `oldest`'s parent already resolved, so a build that has it spawns
+/// nothing twice.
+pub fn run_length_from(repo: &Path, old: &str, oldest: &str, newest: &str) -> Option<usize> {
     if oldest == newest {
         return Some(1);
     }
-    let old = parent_or_empty(repo, oldest)?;
     let mut args = vec!["rev-list", "--count", "--first-parent", newest];
     let exclude;
     if old != EMPTY_TREE {

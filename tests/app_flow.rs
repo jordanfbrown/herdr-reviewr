@@ -7166,18 +7166,62 @@ fn edit_never_lands_a_commit_comment_on_a_worktree_line() {
     let target = app.editor_request.take().unwrap();
     assert_eq!((target.path.as_str(), target.line), ("three.rs", 1));
     comment_on(&mut app, '+', "commit note");
-    assert_eq!(app.store.get(0).unwrap().rev, herdr_reviewr::model::Rev::Commit(shas[3].clone()));
-    // Under a worktree scope the comment is in the list but not in view: editing it from
-    // the list opens the box without moving the cursor onto a same-numbered worktree line.
+    assert_eq!(
+        app.store.get(0).unwrap().rev,
+        herdr_reviewr::model::Rev::Commit(herdr_reviewr::model::CommitPick::single(&shas[3]))
+    );
+    // Under a worktree scope the comment is in the list but its diff is not showing: `e`
+    // is inert there and the footer does not offer it, so the box never opens over a
+    // same-numbered worktree line.
     app.set_scope(Scope::Uncommitted).unwrap();
     app.select_file(0).unwrap();
     assert_eq!(app.diff_path.as_deref(), Some("root.rs"));
-    let before = app.diff_cursor;
     app.open_list();
+    assert!(!app.footer_bands().iter().any(|&(a, _)| a == FooterAction::EditComment));
     app.start_edit();
-    assert!(matches!(app.mode, Mode::Composing { editing: Some(0) }));
-    assert_eq!(app.diff_path.as_deref(), Some("root.rs"), "its file is not in this scope");
-    assert_eq!(app.diff_cursor, before, "the cursor stays put");
+    assert_eq!(app.mode, Mode::List, "nothing opens");
+    // `e` on the All files read pane under `commits` still opens the worktree line: the
+    // file view's numbers are the worktree's.
+    app.close_list();
+    app.set_scope(Scope::Commits).unwrap();
+    enter_tab(&mut app, herdr_reviewr::app::Tab::AllFiles);
+    app.select_file(file_row(&app, "root.rs")).unwrap();
+    app.focus = herdr_reviewr::app::Focus::Diff;
+    app.start_edit();
+    assert_eq!(app.editor_request.take().unwrap().line, 1, "root.rs is one line");
+}
+
+#[test]
+fn the_base_picker_opens_on_the_persisted_pick_from_any_scope() {
+    let (r, shas) = commits_repo();
+    r.set_origin_default("main", &shas[1]);
+    r.git(&["branch", "dev", &shas[2]]);
+    herdr_reviewr::git::write_base_pick(r.path(), "dev").unwrap();
+    let mut app = app_on(&r);
+    assert_eq!(app.scope, Scope::Uncommitted, "branch was never visited");
+    app.open_base_picker();
+    let bp = app.base_picker.as_ref().unwrap();
+    assert_eq!(bp.rows[bp.cursor].name(), "dev", "the highlight opens on the pick");
+}
+
+#[test]
+fn on_the_base_branch_itself_the_picker_lists_the_last_fifty() {
+    let (r, _) = commits_repo();
+    r.set_origin_default("main", "HEAD");
+    let mut app = app_on(&r);
+    let keymap = Keymap::default();
+    press(&mut app, &keymap, KeyCode::Char('G'));
+    assert_eq!(picker(&app).title, "commits · last 50");
+    assert_eq!(picker(&app).rows.len(), 4);
+    assert!(app.footer_bands().iter().any(|&(a, _)| a == FooterAction::CommitAnchor));
+    // The pick row offers no `v`.
+    press(&mut app, &keymap, KeyCode::Enter);
+    r.git(&["reset", "-q", "--hard", "HEAD~1"]);
+    r.git(&["commit", "-q", "--allow-empty", "-m", "other"]);
+    common::land_world(&mut app);
+    press(&mut app, &keymap, KeyCode::Char('G'));
+    assert!(picker(&app).is_pick_row(picker(&app).cursor));
+    assert!(!app.footer_bands().iter().any(|&(a, _)| a == FooterAction::CommitAnchor));
 }
 
 #[test]
@@ -7239,11 +7283,11 @@ fn a_poll_under_the_open_picker_reconciles_by_sha() {
     common::land_world(&mut app);
     assert_eq!((picker(&app).cursor, picker(&app).anchor), (4, Some(3)));
     // The anchored commit is rewritten away: the highlight keeps its sha and the anchor
-    // falls back to the nearest surviving row, so the run survives as a run.
+    // falls back to the nearest surviving row.
     r.git(&["reset", "-q", "--hard", &shas[1]]);
     common::land_world(&mut app);
     assert_eq!(picker(&app).rows.len(), 2);
-    assert_eq!((picker(&app).cursor, picker(&app).anchor), (0, Some(1)));
+    assert_eq!((picker(&app).cursor, picker(&app).anchor), (0, Some(0)));
     // Both gone: each clamps to the last row.
     r.git(&["reset", "-q", "--hard", &shas[0]]);
     common::land_world(&mut app);
@@ -7268,7 +7312,10 @@ fn a_commit_comment_renders_only_while_the_scope_reads_that_commit() {
     press(&mut app, &keymap, KeyCode::Enter);
     app.select_file(0).unwrap();
     comment_on(&mut app, '+', "commit note");
-    assert_eq!(app.store.get(1).unwrap().rev, herdr_reviewr::model::Rev::Commit(shas[2].clone()));
+    assert_eq!(
+        app.store.get(1).unwrap().rev,
+        herdr_reviewr::model::Rev::Commit(herdr_reviewr::model::CommitPick::single(&shas[2]))
+    );
     assert_eq!(app.commented_lines().len(), 1, "only the commit comment renders here");
 
     // Back on a worktree scope, the worktree comment renders and the commit one hides.
