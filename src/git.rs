@@ -1198,7 +1198,7 @@ pub fn write_baseline_ref(repo: &Path, key: &str, sha: &str) -> Result<()> {
 }
 
 /// git's well-known empty-tree object, used as the diff base when a repo has no commits.
-const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// `HEAD` when the repo has a commit, else the empty tree (a commitless repo has no HEAD).
 fn diff_base(repo: &Path) -> String {
@@ -1234,7 +1234,8 @@ pub fn changed_files(
             ),
             None => return Ok(Vec::new()),
         },
-        Scope::LastTurn => return Ok(Vec::new()),
+        // `last-turn` and `commits` diff through their own entry points.
+        Scope::LastTurn | Scope::Commits => return Ok(Vec::new()),
     };
     // Branch diffs against the worktree, so like uncommitted it carries untracked files
     // that `git diff` never reports.
@@ -1253,6 +1254,104 @@ pub fn changed_against_tree(repo: &Path, tree: &str) -> Result<Vec<ChangedFile>>
     let numstat = git(repo, &["diff", tree, &current, "--numstat", "-z"])?;
     let name_status = git(repo, &["diff", tree, &current, "--name-status", "-z"])?;
     assemble(repo, &numstat, &name_status, false)
+}
+
+/// The changed files between two commits, `old` against `new`, for the `commits` scope:
+/// both sides are committed trees, so no untracked pass runs (specs/review-model.md
+/// Commit pick). `old` may be the empty tree for a root commit.
+pub fn changed_between(repo: &Path, old: &str, new: &str) -> Result<Vec<ChangedFile>> {
+    let numstat = git(repo, &["diff", old, new, "--numstat", "-z"])?;
+    let name_status = git(repo, &["diff", old, new, "--name-status", "-z"])?;
+    assemble(repo, &numstat, &name_status, false)
+}
+
+/// `sha`'s first parent, or the empty tree when `sha` is a root commit: the old side of a
+/// run whose oldest commit is `sha` (specs/review-model.md Commit pick). `None` when the
+/// commit itself is missing.
+pub fn parent_or_empty(repo: &Path, sha: &str) -> Option<String> {
+    if !commit_exists(repo, sha) {
+        return None;
+    }
+    Some(
+        git_line(repo, &["rev-parse", "--verify", "-q", &format!("{sha}^")])
+            .unwrap_or_else(|| EMPTY_TREE.to_string()),
+    )
+}
+
+/// `sha`'s subject line, for the header paint (specs/tui.md).
+pub fn commit_subject(repo: &Path, sha: &str) -> Option<String> {
+    git_line(repo, &["log", "-1", "--format=%s", sha])
+}
+
+/// Whether `sha` names a commit the repository still holds (specs/review-model.md `gone`).
+pub fn commit_exists(repo: &Path, sha: &str) -> bool {
+    git_ok(repo, &["cat-file", "-e", &format!("{sha}^{{commit}}")])
+}
+
+/// Whether `sha` is reachable from `HEAD` (specs/review-model.md `off branch`). A missing
+/// commit is unreachable.
+pub fn is_reachable(repo: &Path, sha: &str) -> bool {
+    git_ok(repo, &["merge-base", "--is-ancestor", sha, "HEAD"])
+}
+
+/// How many commits `oldest..=newest` spans along the first-parent walk from `newest`
+/// (`specs/tui.md`). `None` when either end is missing, or `oldest` is not behind `newest`.
+pub fn run_length(repo: &Path, oldest: &str, newest: &str) -> Option<usize> {
+    if oldest == newest {
+        return Some(1);
+    }
+    let old = parent_or_empty(repo, oldest)?;
+    let mut args = vec!["rev-list", "--count", "--first-parent", newest];
+    let exclude;
+    if old != EMPTY_TREE {
+        if !git_ok(repo, &["merge-base", "--is-ancestor", oldest, newest]) {
+            return None;
+        }
+        exclude = format!("^{old}");
+        args.push(&exclude);
+    }
+    git_line(repo, &args)?.parse().ok()
+}
+
+/// One row of the commit picker: the full id, the subject, and the author time as unix
+/// seconds (specs/input.md Commit picker).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CommitRow {
+    pub sha: String,
+    pub subject: String,
+    pub time: u64,
+}
+
+/// The picker's universe, newest first: `merge-base..HEAD` over a resolved `base` oid, or
+/// the last 50 commits reachable from `HEAD` without one (specs/review-model.md Commit
+/// pick). An unborn repository lists nothing.
+pub fn list_commits(repo: &Path, base: Option<&str>) -> Result<Vec<CommitRow>> {
+    if git_line(repo, &["rev-parse", "--verify", "-q", "HEAD"]).is_none() {
+        return Ok(Vec::new());
+    }
+    let range = base.and_then(|b| merge_base(repo, b)).map(|mb| format!("{mb}..HEAD"));
+    let mut args = vec!["log", "--format=%H%x00%s%x00%ct", "-z"];
+    match &range {
+        Some(r) => args.push(r),
+        None => args.extend(["-50", "HEAD"]),
+    }
+    let out = git(repo, &args)?;
+    Ok(parse_commit_log(&out))
+}
+
+/// Parse `git log --format=%H%x00%s%x00%ct -z` output: three NUL-separated fields per
+/// commit, commits themselves NUL-terminated.
+fn parse_commit_log(out: &str) -> Vec<CommitRow> {
+    let fields: Vec<&str> = out.split('\0').collect();
+    fields
+        .chunks(3)
+        .filter(|c| c.len() == 3 && !c[0].is_empty())
+        .map(|c| CommitRow {
+            sha: c[0].to_string(),
+            subject: c[1].to_string(),
+            time: c[2].trim().parse().unwrap_or(0),
+        })
+        .collect()
 }
 
 /// One entry in the `All files` worktree listing: a path plus whether git ignores it and

@@ -9,6 +9,8 @@ pub enum Scope {
     Uncommitted,
     Branch,
     LastTurn,
+    /// A picked run of commits, diffed `A^` against `B` (specs/review-model.md Commit pick).
+    Commits,
 }
 
 impl Scope {
@@ -17,6 +19,7 @@ impl Scope {
             Scope::Uncommitted => "uncommitted",
             Scope::Branch => "branch",
             Scope::LastTurn => "last turn",
+            Scope::Commits => "commits",
         }
     }
 
@@ -27,18 +30,54 @@ impl Scope {
             Scope::Uncommitted => "uncommitted",
             Scope::Branch => "branch",
             Scope::LastTurn => "last-turn",
+            Scope::Commits => "commits",
         }
     }
 
-    /// Cycle to the next scope, for the header chip click: uncommitted → branch → last turn.
+    /// Cycle to the next scope, for the header chip click: uncommitted → branch → last turn →
+    /// commits (specs/input.md Commit picker).
     #[must_use]
     pub fn cycle(self) -> Self {
         match self {
             Scope::Uncommitted => Scope::Branch,
             Scope::Branch => Scope::LastTurn,
-            Scope::LastTurn => Scope::Uncommitted,
+            Scope::LastTurn => Scope::Commits,
+            Scope::Commits => Scope::Uncommitted,
         }
     }
+
+    /// Whether the scope reads its new side from the worktree. Every scope but `commits`
+    /// does, so a worktree comment renders under each of them (specs/review-model.md).
+    pub fn reads_worktree(self) -> bool {
+        self != Scope::Commits
+    }
+}
+
+/// The `commits` scope's pick: a contiguous run from `oldest` to `newest`, both full commit
+/// ids, equal for a run of one (specs/review-model.md Commit pick).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CommitPick {
+    pub oldest: String,
+    pub newest: String,
+}
+
+impl CommitPick {
+    pub fn single(sha: &str) -> Self {
+        Self { oldest: sha.to_string(), newest: sha.to_string() }
+    }
+
+    pub fn is_single(&self) -> bool {
+        self.oldest == self.newest
+    }
+}
+
+/// Where a comment's new side was read: the worktree, or the commit it came from. A diff
+/// comment renders only while the active scope reads its new side from the same place
+/// (specs/review-model.md File content).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Rev {
+    Worktree,
+    Commit(String),
 }
 
 /// How a file changed within a scope.
@@ -95,6 +134,8 @@ pub struct Comment {
     /// True when anchored to a diff (the `Changes` tab); false for a File-view content comment
     /// (the `All files` tab). Selects how staleness is judged (specs/review-model.md).
     pub diff_anchored: bool,
+    /// Where the new side was read (specs/review-model.md).
+    pub rev: Rev,
 }
 
 impl Comment {
@@ -168,7 +209,7 @@ impl CommentStore {
 
 #[cfg(test)]
 mod tests {
-    use super::{Comment, CommentStore, Scope, Side};
+    use super::{Comment, CommentStore, Rev, Scope, Side};
 
     fn comment(file: &str, start: u32, end: u32, text: &str) -> Comment {
         Comment {
@@ -179,17 +220,32 @@ mod tests {
             lines: "+x".into(),
             text: text.into(),
             diff_anchored: true,
+            rev: Rev::Worktree,
         }
     }
 
     #[test]
     fn scope_cycles_and_labels() {
-        // The chip click cycles through all three scopes and wraps.
+        // The chip click cycles through all four scopes and wraps.
         assert_eq!(Scope::Uncommitted.cycle(), Scope::Branch);
         assert_eq!(Scope::Branch.cycle(), Scope::LastTurn);
-        assert_eq!(Scope::LastTurn.cycle(), Scope::Uncommitted);
+        assert_eq!(Scope::LastTurn.cycle(), Scope::Commits);
+        assert_eq!(Scope::Commits.cycle(), Scope::Uncommitted);
         assert_eq!(Scope::Uncommitted.label(), "uncommitted");
         assert_eq!(Scope::LastTurn.label(), "last turn");
+        assert_eq!(Scope::Commits.label(), "commits");
+        assert_eq!(Scope::Commits.name(), "commits");
+    }
+
+    #[test]
+    fn only_commits_reads_from_a_commit() {
+        assert!(Scope::Uncommitted.reads_worktree());
+        assert!(Scope::Branch.reads_worktree());
+        assert!(Scope::LastTurn.reads_worktree());
+        assert!(!Scope::Commits.reads_worktree());
+        let pick = super::CommitPick::single("abc");
+        assert!(pick.is_single());
+        assert!(!super::CommitPick { oldest: "a".into(), newest: "b".into() }.is_single());
     }
 
     #[test]
