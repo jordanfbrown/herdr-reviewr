@@ -11,6 +11,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   comments made there stay on their commit. `g` switches back to the pick.
 
 ### Changed
+- **Breaking: `g` and `G` are new default keys.** A `[keybindings]` config that already uses either
+  now collides and must move it.
 - **Footer vocabulary.** One word per meaning everywhere: `move`, `open`, `select`. `B` now
   works in every scope and opens the base picker, like `G`.
 

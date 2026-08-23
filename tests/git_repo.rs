@@ -910,7 +910,7 @@ fn a_root_commit_diffs_against_the_empty_tree() {
 
 #[test]
 fn a_merge_commit_contributes_its_tree_change() {
-    use herdr_reviewr::git::{changed_between, parent_or_empty};
+    use herdr_reviewr::git::{CommitRef, changed_between, parent_or_empty};
     let (r, shas) = run_repo();
     r.git(&["checkout", "-q", "-b", "side", &shas[1]]);
     r.write("side.rs", "s\n");
@@ -924,15 +924,42 @@ fn a_merge_commit_contributes_its_tree_change() {
     let files = changed_between(r.path(), &old, &merge).unwrap();
     let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(paths, ["side.rs"]);
-    // The row knows it is a merge, its author, and the refs pointing at it.
+    // The row knows it is a merge, its author, and the refs pointing at it, by kind.
     r.git(&["tag", "v1"]);
+    r.git(&["branch", "other", &shas[3]]);
+    r.git(&["update-ref", "refs/remotes/origin/main", &shas[2]]);
     let rows = herdr_reviewr::git::list_commits(r.path(), None).unwrap();
     assert!(rows[0].merge && !rows[1].merge);
     assert_eq!(rows[0].author, "Test");
-    assert_eq!(rows[0].refs, ["tag: v1"], "HEAD and the checked-out branch are dropped");
-    let side = rows.iter().find(|c| c.subject == "side").unwrap();
-    assert_eq!(side.refs, ["side"]);
-    assert!(rows.iter().filter(|c| c.subject == "three").all(|c| c.refs.is_empty()));
+    assert_eq!(rows[0].refs, [CommitRef::Tag("v1".into())], "HEAD and its branch are dropped");
+    assert_eq!(rows[1].refs, [CommitRef::Branch("other".into())]);
+    assert_eq!(rows[2].refs, [CommitRef::Remote("origin/main".into())]);
+    // The universe is the first-parent walk: the side branch's commit is behind the merge
+    // row, never a row of its own, so any contiguous run is one ancestor chain.
+    let subjects: Vec<&str> = rows.iter().map(|c| c.subject.as_str()).collect();
+    assert_eq!(subjects, ["merge side", "three", "two", "one", "root"]);
+}
+
+#[test]
+fn a_shallow_cut_is_gone_not_a_root() {
+    use herdr_reviewr::git::{EMPTY_TREE, commit_exists, parent_or_empty};
+    let (r, shas) = run_repo();
+    let shallow = tempfile::tempdir().unwrap();
+    let url = format!("file://{}", r.path().display());
+    let out = std::process::Command::new("git")
+        .args(["clone", "-q", "--depth", "1", &url, "w"])
+        .current_dir(shallow.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let w = shallow.path().join("w");
+    // `HEAD`'s parent is named by the commit object even though the clone lacks it, so the
+    // pick reads `gone` rather than diffing the whole tree against the empty tree.
+    let parent = parent_or_empty(&w, &shas[3]).unwrap();
+    assert_eq!(parent, shas[2]);
+    assert_ne!(parent, EMPTY_TREE);
+    assert!(!commit_exists(&w, &parent), "the cut parent is not in the clone");
+    assert_eq!(parent_or_empty(&w, &shas[0]), None, "the root itself is not in the clone");
 }
 
 #[test]

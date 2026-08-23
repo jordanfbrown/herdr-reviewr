@@ -224,6 +224,8 @@ pub struct CommitPicker {
     pub title: String,
     /// The empty-universe message (`specs/input.md`).
     pub empty: String,
+    /// The `HEAD` the rows were listed under: a poll re-lists only once it moves.
+    pub head: Option<String>,
 }
 
 impl CommitPicker {
@@ -254,11 +256,12 @@ impl CommitPicker {
     }
 
     /// The inclusive visible range from the anchor to the highlight, or the highlight alone
-    /// (`specs/input.md`): `(top, bottom)` in visible indices.
+    /// (`specs/input.md`): `(top, bottom)` in visible indices. The pick row sits outside
+    /// every run, so the highlight on it is a run of itself whatever the anchor.
     pub fn run(&self) -> (usize, usize) {
         match self.anchor {
-            Some(a) => (a.min(self.cursor), a.max(self.cursor)),
-            None => (self.cursor, self.cursor),
+            Some(a) if !self.is_pick_row(self.cursor) => (a.min(self.cursor), a.max(self.cursor)),
+            _ => (self.cursor, self.cursor),
         }
     }
 
@@ -274,7 +277,7 @@ impl CommitPicker {
     /// Whether visible index `i` carries the run bar: the rows from the anchor to the
     /// highlight, only while an anchor is set.
     pub fn in_run(&self, i: usize) -> bool {
-        if self.anchor.is_none() {
+        if self.anchor.is_none() || self.is_pick_row(self.cursor) {
             return false;
         }
         let (top, bottom) = self.run();
@@ -608,9 +611,6 @@ pub struct App {
     /// The commit picker's rows, highlight, and anchor while `Mode::CommitPick` is open
     /// (`specs/input.md` Commit picker).
     pub commit_picker: Option<CommitPicker>,
-    /// The scope the commit picker opened over, restored by `esc` when the picker opened
-    /// without switching (`specs/input.md` Commit picker).
-    picker_scope: Scope,
     /// Bumped by each pick made in this pane, so an in-flight build that read the old pick
     /// fails the landing's input match instead of reverting the pick (`crate::world::WorldInput`).
     base_epoch: u64,
@@ -875,7 +875,6 @@ impl App {
             commit_pick: None,
             pick_status: None,
             commit_picker: None,
-            picker_scope: scope,
             base_epoch: 0,
             scope,
             tab: Tab::Changes,
@@ -1134,7 +1133,6 @@ impl App {
                 self.base_picker = old.base_picker.take();
                 // So does the commit picker, with its highlight and anchor (`specs/tui.md`).
                 self.commit_picker = old.commit_picker.take();
-                self.picker_scope = old.picker_scope;
             }
         }
     }
@@ -1394,7 +1392,7 @@ impl App {
         }
         // The open commit picker reads the same world: its list refreshes under the poll and
         // reconciles by sha (`specs/input.md` Commit picker).
-        self.refresh_commit_picker();
+        self.refresh_commit_picker(snapshot.head.as_deref());
         self.tab_visited = true;
     }
 
@@ -1622,8 +1620,14 @@ impl App {
     /// Whether the `commits` scope is active over a pruned pick: the empty state both panes
     /// paint as [`Self::commits_gone_message`] (`specs/tui.md`).
     pub fn commits_gone(&self) -> bool {
-        self.scope == Scope::Commits
-            && matches!(self.pick_status, Some(PickStatus { verdict: PickVerdict::Gone(_), .. }))
+        self.scope == Scope::Commits && self.pick_gone()
+    }
+
+    /// Whether the last build found the pick pruned, whatever scope is showing now: the
+    /// verdict is adopted only in `commits` and kept across a switch away, so `g` from
+    /// another scope knows the pick has nothing to show (`specs/input.md`).
+    fn pick_gone(&self) -> bool {
+        matches!(self.pick_status, Some(PickStatus { verdict: PickVerdict::Gone(_), .. }))
     }
 
     /// The one message both panes paint for a [`Self::commits_gone`] frame, naming the first
@@ -2187,7 +2191,7 @@ impl App {
         // `commits` with no pick, or a `gone` one, has nothing to show: the picker opens
         // instead, without switching, so `esc` leaves this scope active (`specs/input.md`).
         if scope == Scope::Commits
-            && (self.commit_pick.is_none() || self.commits_gone())
+            && (self.commit_pick.is_none() || self.pick_gone())
             && !self.composing()
         {
             self.open_commit_picker();
@@ -3209,8 +3213,10 @@ impl App {
                 return None;
             }
             // The open file, never the navigator's selection: the two diverge whenever a file
-            // was opened by path rather than by row. A preview paints no numbered rows.
-            (self.diff_path.clone()?, !self.preview_active())
+            // was opened by path rather than by row. A preview paints no numbered rows, and
+            // in `commits` the numbers belong to the picked commit, not the worktree file
+            // the editor opens, so both open the file at its start (`specs/input.md` Edit).
+            (self.diff_path.clone()?, !self.preview_active() && self.scope != Scope::Commits)
         };
         // The nearest row at or above the cursor carrying a worktree line number. A deletion
         // and a fold carry none, and a notice diff paints no rows at all, so each falls back
@@ -3231,6 +3237,7 @@ impl App {
         self.preview = false;
         let (file, side, start, end, text) =
             (c.file.clone(), c.side, c.start, c.end, c.text.clone());
+        let in_view = self.comment_in_view(c);
 
         // Bring the comment's file into the diff and land the cursor on its line, so the
         // inline edit box opens over the comment — even when editing from the list, and even
@@ -3249,10 +3256,13 @@ impl App {
         }
         // Only move the cursor when the open diff is actually the comment's file, so a
         // stale comment (file gone from the changeset) never jumps the cursor onto a
-        // same-numbered line in a different file. Land on the range's LAST row — the row
-        // the card splices under (`card_rows`) — so the edit box opens in the card's
-        // place instead of jumping to the range's first line (specs/input.md).
-        if self.diff_path.as_deref() == Some(file.as_str())
+        // same-numbered line in a different file, and a comment from another view (a commit
+        // comment under a worktree scope) never lands on the same-numbered worktree line
+        // (`specs/review-model.md`). Land on the range's LAST row — the row the card splices
+        // under (`card_rows`) — so the edit box opens in the card's place instead of jumping
+        // to the range's first line (specs/input.md).
+        if in_view
+            && self.diff_path.as_deref() == Some(file.as_str())
             && let Some(idx) = self.visible.iter().rposition(|row| {
                 let no = match side {
                     Side::New => row.new_no(),
@@ -4180,9 +4190,10 @@ impl App {
             out.push((A::BasePick, Primary));
             out.push((A::ScopeOther, Do));
             out.push((A::Refresh, Do));
-        } else if self.commits_gone() {
+        } else if self.commits_gone() && self.tab == Tab::Changes {
             // A gone pick: the picker is the way forward, and `g` would reopen it too, so
-            // only the other three scopes offer (`specs/input.md`).
+            // only the other three scopes offer (`specs/input.md`). `All files` keeps its
+            // content and its own actions (`specs/tui.md`).
             out.push((A::CommitPick, Primary));
             out.push((A::ScopeOther, Do));
             out.push((A::Refresh, Do));
@@ -4526,7 +4537,13 @@ impl App {
         if !self.tab.is_file_tab() || self.mode != Mode::Normal {
             return;
         }
-        let Some(mut picker) = self.list_commit_rows() else { return };
+        let mut picker = match self.list_commit_rows() {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = e;
+                return;
+            }
+        };
         let pick = self.commit_pick.clone();
         let newest_at = pick.as_ref().and_then(|p| picker.index_of(&p.newest));
         let oldest_at = pick.as_ref().and_then(|p| picker.index_of(&p.oldest));
@@ -4541,36 +4558,30 @@ impl App {
             }
             (None, _, _) => {}
         }
-        self.picker_scope = self.scope;
         self.commit_picker = Some(picker);
         self.mode = Mode::CommitPick;
     }
 
     /// The picker's rows, title, and empty message for the current universe
-    /// (`specs/review-model.md` Commit pick). `None` reports the failure in the status line.
-    fn list_commit_rows(&mut self) -> Option<CommitPicker> {
-        let base = match git::resolve_base(&self.repo, self.base.as_deref()) {
-            Ok(r) => r.status.winner,
-            Err(e) => {
-                self.status = e.0;
-                return None;
-            }
-        };
-        let rows = match git::list_commits(&self.repo, base.as_ref().map(git::ResolvedBase::oid)) {
-            Ok(rows) => rows,
-            Err(e) => {
-                self.status = e.to_string();
-                return None;
-            }
-        };
+    /// (`specs/review-model.md` Commit pick). The title follows the range actually listed:
+    /// a base with no merge-base (unrelated histories, a shallow cut) lists the last 50.
+    fn list_commit_rows(&self) -> Result<CommitPicker, String> {
+        let base = git::resolve_base(&self.repo, self.base.as_deref())
+            .map_err(|e| e.0)?
+            .status
+            .winner
+            .and_then(|b| git::merge_base(&self.repo, b.oid()).map(|mb| (b, mb)));
+        let rows = git::list_commits(&self.repo, base.as_ref().map(|(_, mb)| mb.as_str()))
+            .map_err(|e| e.to_string())?;
         let (title, empty) = match &base {
-            Some(b) => (
+            Some((b, _)) => (
                 format!("commits · {} over {}", rows.len(), b.name()),
                 format!("no commits over {}", b.name()),
             ),
             None => ("commits · last 50".to_string(), "no commits yet".to_string()),
         };
-        Some(CommitPicker { rows, pick_row: None, cursor: 0, anchor: None, title, empty })
+        let head = git::head_oid(&self.repo);
+        Ok(CommitPicker { rows, pick_row: None, cursor: 0, anchor: None, title, empty, head })
     }
 
     /// Close the picker back to `Normal`. The scope stays where it is: a pick moved it, and a
@@ -4593,10 +4604,7 @@ impl App {
     /// Move the highlight, clamped at the ends (`specs/input.md` Commit picker).
     pub fn commit_picker_move(&mut self, delta: isize) {
         let Some(cp) = self.commit_picker.as_mut() else { return };
-        if cp.is_empty() {
-            return;
-        }
-        cp.cursor = cp.cursor.saturating_add_signed(delta).min(cp.len() - 1);
+        cp.cursor = step(cp.cursor, delta, cp.len());
     }
 
     /// Move the highlight to visible `row`, for a click. A row past the end is inert.
@@ -4634,14 +4642,21 @@ impl App {
         Ok(())
     }
 
-    /// A poll under the open picker: refresh the universe and reconcile the highlight and
-    /// the anchor by sha (`specs/input.md` Commit picker, `specs/overview.md` Continuity).
-    pub fn refresh_commit_picker(&mut self) {
+    /// A poll under the open picker: once `HEAD` moved, re-list the universe and reconcile
+    /// the highlight and the anchor by sha (`specs/input.md` Commit picker,
+    /// `specs/overview.md` Continuity). The same `HEAD` keeps the rows as they are, so a
+    /// quiet poll spawns nothing on the frame thread, and a failed re-list keeps them too,
+    /// without touching the status line.
+    pub fn refresh_commit_picker(&mut self, head: Option<&str>) {
         if self.mode != Mode::CommitPick {
             return;
         }
-        let Some(old) = self.commit_picker.clone() else { return };
-        let Some(mut fresh) = self.list_commit_rows() else { return };
+        let Some(old) = self.commit_picker.as_ref() else { return };
+        if old.head.as_deref() == head {
+            return;
+        }
+        let Ok(mut fresh) = self.list_commit_rows() else { return };
+        let old = self.commit_picker.take().expect("checked above");
         let pick = self.commit_pick.clone();
         let listed = |p: &CommitPick, cp: &CommitPicker| matches!((cp.index_of(&p.newest), cp.index_of(&p.oldest)), (Some(n), Some(o)) if o >= n);
         if let Some(p) = pick.filter(|p| !listed(p, &fresh)) {
@@ -4657,7 +4672,10 @@ impl App {
         let last = fresh.len().saturating_sub(1);
         // Identity first, then the nearest surviving row, then clamp (`specs/overview.md`).
         let cursor = relocate(old.cursor).unwrap_or(old.cursor.min(last));
-        let anchor = old.anchor.and_then(relocate).filter(|&a| !fresh.is_pick_row(a));
+        let anchor = old
+            .anchor
+            .map(|a| relocate(a).unwrap_or(a.min(last)))
+            .filter(|&a| !fresh.is_pick_row(a));
         fresh.cursor = cursor;
         fresh.anchor = anchor;
         self.commit_picker = Some(fresh);
@@ -5030,6 +5048,7 @@ mod tests {
             anchor: Some(2),
             title: "commits · last 50".to_string(),
             empty: "no commits yet".to_string(),
+            head: None,
         });
         old.commit_pick = Some(CommitPick { oldest: "c".repeat(40), newest: "a".repeat(40) });
         old.pick_status = Some(PickStatus {

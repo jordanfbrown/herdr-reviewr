@@ -119,20 +119,21 @@ nothing.
 The following table is every state `edit` can be pressed in. A state it does not name is a
 state nobody decided.
 
-| cursor on                                  | `edit` opens                                     |
-| ------------------------------------------ | ------------------------------------------------ |
-| a commented line, card on screen           | that comment, for editing                        |
-| any other read-pane line                   | the open file at that line                       |
-| a deletion or a fold                       | the open file at the nearest numbered line above |
-| a markdown preview                         | the open file at line 1                          |
-| a diff with no rows                        | the open file at line 1                          |
-| a file row in the navigator                | that file at line 1                              |
-| a directory row                            | nothing                                          |
-| a live line selection on the diff          | nothing                                          |
-| the comments list                          | the highlighted comment, for editing             |
-| the comment editor, find band, or a picker | nothing, the key is theirs                       |
-| the search screen                          | nothing, the key types into the query            |
-| the `PR` tab                               | nothing, it names no file                        |
+| cursor on                                  | `edit` opens                                                                          |
+| ------------------------------------------ | ------------------------------------------------------------------------------------- |
+| a commented line, card on screen           | that comment, for editing                                                             |
+| any other read-pane line                   | the open file at that line                                                            |
+| a deletion or a fold                       | the open file at the nearest numbered line above                                      |
+| a markdown preview                         | the open file at line 1                                                               |
+| a `commits` diff                           | the open file at line 1, its numbers are the commit's                                 |
+| a diff with no rows                        | the open file at line 1                                                               |
+| a file row in the navigator                | that file at line 1                                                                   |
+| a directory row                            | nothing                                                                               |
+| a live line selection on the diff          | nothing                                                                               |
+| the comments list                          | the highlighted comment, for editing. The cursor moves to it only while it is in view |
+| the comment editor, find band, or a picker | nothing, the key is theirs                                                            |
+| the search screen                          | nothing, the key types into the query                                                 |
+| the `PR` tab                               | nothing, it names no file                                                             |
 
 The footer offers `e edit file` exactly on the rows that open a file, and never elsewhere. Whether the file is still on disk is the press's question, not the footer's.
 
@@ -350,11 +351,11 @@ The trail carries, in this order:
 | -------------- | -------------------------------------------------------------------- |
 | `✎ N`          | N comments in the store carry this commit as their `rev`             |
 | `merge`        | the commit has two or more parents                                   |
-| one ref        | the first of: `pr` when the open PR's head is this commit (`forge-host.md`), a remote tip, a `tag: …`, another local branch |
+| one ref        | the first of: `pr` when the open PR's head is this commit (`forge-host.md`), a remote-tracking tip, a `tag: …`, another local branch |
 
 `HEAD` and the checked-out branch are never shown: the top row is `HEAD`, and its branch is the one under review. One ref per row, because `pr`, the remote tip, and the branch usually name the same commit, and the reviewer wants the strongest fact, not the list.
 
-A list row is identified by its sha, the pick row by its pick. A poll refreshes the list under the open picker and reconciles the highlight and the anchor by that identity (`overview.md`).
+A list row is identified by its sha, the pick row by its pick. A poll that moved `HEAD` refreshes the list under the open picker and reconciles the highlight and the anchor by that identity, each falling back to the nearest surviving row (`overview.md`). A poll that left `HEAD` alone keeps the rows as they are.
 
 The highlight opens on the current pick's newest commit, else the first row. A run of two or more reopens with its anchor on the oldest commit, so `enter` without moving re-picks the same run, and a move resizes it. A run of one reopens with no anchor, so `k` then `enter` steps to the next commit. The highlight and the anchor are place state (`overview.md`).
 

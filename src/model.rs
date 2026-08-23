@@ -45,12 +45,6 @@ impl Scope {
             Scope::Commits => Scope::Uncommitted,
         }
     }
-
-    /// Whether the scope reads its new side from the worktree. Every scope but `commits`
-    /// does, so a worktree comment renders under each of them (specs/review-model.md).
-    pub fn reads_worktree(self) -> bool {
-        self != Scope::Commits
-    }
 }
 
 /// The `commits` scope's pick: a contiguous run from `oldest` to `newest`, both full commit
@@ -238,11 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn only_commits_reads_from_a_commit() {
-        assert!(Scope::Uncommitted.reads_worktree());
-        assert!(Scope::Branch.reads_worktree());
-        assert!(Scope::LastTurn.reads_worktree());
-        assert!(!Scope::Commits.reads_worktree());
+    fn a_pick_of_one_is_single() {
         let pick = super::CommitPick::single("abc");
         assert!(pick.is_single());
         assert!(!super::CommitPick { oldest: "a".into(), newest: "b".into() }.is_single());

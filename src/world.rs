@@ -54,6 +54,9 @@ pub struct WorldSnapshot {
     /// The `commits` scope's pick verdict, from the same build as the changeset it heads
     /// (specs/review-model.md Commit pick). `None` on every other scope.
     pub pick_status: Option<PickStatus>,
+    /// The commit `HEAD` named when the build ran, the commit picker's universe key
+    /// (specs/input.md Commit picker). `None` in an unborn repository.
+    pub head: Option<String>,
 }
 
 /// What one build found the commit pick to be (specs/review-model.md Commit pick).
@@ -98,9 +101,11 @@ pub fn build(input: &WorldInput) -> Result<WorldSnapshot> {
             entries: Vec::new(),
             branch_base: git::BaseStatus::default(),
             pick_status: None,
+            head: None,
         });
     }
     let ScopeBuild { branch_base, pick_status, changed } = build_changed(input)?;
+    let head = git::head_oid(&input.repo);
     let changed_map = annotate(&changed);
     let entries = match input.tab {
         // The whole worktree (ignored included), with expanded ignored dirs loaded lazily.
@@ -108,7 +113,7 @@ pub fn build(input: &WorldInput) -> Result<WorldSnapshot> {
         // `Changes` (the `PR` tab never builds a snapshot).
         _ => changed.iter().map(Entry::from_changed).collect(),
     };
-    Ok(WorldSnapshot { changed: changed_map, entries, branch_base, pick_status })
+    Ok(WorldSnapshot { changed: changed_map, entries, branch_base, pick_status, head })
 }
 
 /// The active scope's changed files and, on the `branch` scope, the base they diff against —

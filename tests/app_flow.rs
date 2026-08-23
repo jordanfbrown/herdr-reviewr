@@ -7092,8 +7092,9 @@ fn an_off_branch_pick_keeps_painting_as_a_row_above_the_list() {
     press(&mut app, &keymap, KeyCode::Char('j'));
     press(&mut app, &keymap, KeyCode::Char('v'));
     press(&mut app, &keymap, KeyCode::Char('k'));
-    assert_eq!(picker(&app).run_len(), 2, "the run counts the pick row");
-    assert_eq!(picker(&app).picked(), app.commit_pick, "but enter on the pick row re-picks it");
+    assert_eq!(picker(&app).run_len(), 1, "the pick row sits outside every run");
+    assert!(!picker(&app).in_run(0) && !picker(&app).in_run(1), "so no row wears the bar");
+    assert_eq!(picker(&app).picked(), app.commit_pick, "and enter on the pick row re-picks it");
     press(&mut app, &keymap, KeyCode::Enter);
     assert_eq!(app.commit_pick, Some(herdr_reviewr::model::CommitPick::single(&shas[3])));
     assert_eq!(app.scope, Scope::Commits);
@@ -7134,9 +7135,64 @@ fn a_gone_pick_reads_as_gone_and_g_reopens_the_picker() {
     assert!(picker(&app).pick_row.is_some(), "the gone pick is the row above the list");
     press(&mut app, &keymap, KeyCode::Esc);
     assert_eq!(app.scope, Scope::Commits, "esc leaves the scope where it was");
-    // `All files` keeps its content.
+    // `All files` keeps its content, and its own footer.
     enter_tab(&mut app, herdr_reviewr::app::Tab::AllFiles);
     assert!(!app.entries.is_empty());
+    let bands = app.footer_bands();
+    assert_ne!(bands[0].0, FooterAction::CommitPick, "the gone row is the Changes tab's");
+    assert!(bands.iter().any(|&(a, _)| a == FooterAction::TogglePane));
+    // `g` from another scope knows the pick is gone and opens the picker instead of
+    // switching into the empty scope.
+    enter_tab(&mut app, herdr_reviewr::app::Tab::Changes);
+    app.set_scope(Scope::Uncommitted).unwrap();
+    press(&mut app, &keymap, KeyCode::Char('g'));
+    assert_eq!(app.mode, Mode::CommitPick);
+    assert_eq!(app.scope, Scope::Uncommitted, "without switching");
+}
+
+#[test]
+fn edit_never_lands_a_commit_comment_on_a_worktree_line() {
+    let (r, shas) = commits_repo();
+    let mut app = app_on(&r);
+    let keymap = Keymap::default();
+    press(&mut app, &keymap, KeyCode::Char('G'));
+    press(&mut app, &keymap, KeyCode::Enter);
+    app.select_file(0).unwrap();
+    assert_eq!(app.diff_path.as_deref(), Some("three.rs"));
+    // `e` on the commit's diff opens the worktree file at its start: the diff's numbers
+    // belong to the commit, not the file on disk.
+    app.focus = herdr_reviewr::app::Focus::Diff;
+    app.start_edit();
+    let target = app.editor_request.take().unwrap();
+    assert_eq!((target.path.as_str(), target.line), ("three.rs", 1));
+    comment_on(&mut app, '+', "commit note");
+    assert_eq!(app.store.get(0).unwrap().rev, herdr_reviewr::model::Rev::Commit(shas[3].clone()));
+    // Under a worktree scope the comment is in the list but not in view: editing it from
+    // the list opens the box without moving the cursor onto a same-numbered worktree line.
+    app.set_scope(Scope::Uncommitted).unwrap();
+    app.select_file(0).unwrap();
+    assert_eq!(app.diff_path.as_deref(), Some("root.rs"));
+    let before = app.diff_cursor;
+    app.open_list();
+    app.start_edit();
+    assert!(matches!(app.mode, Mode::Composing { editing: Some(0) }));
+    assert_eq!(app.diff_path.as_deref(), Some("root.rs"), "its file is not in this scope");
+    assert_eq!(app.diff_cursor, before, "the cursor stays put");
+}
+
+#[test]
+fn the_picker_title_follows_the_range_it_lists() {
+    let (r, _) = commits_repo();
+    let mut app = app_on(&r);
+    let keymap = Keymap::default();
+    // A base with no merge-base (unrelated history) lists the last 50 and says so.
+    r.git(&["checkout", "-q", "--orphan", "island"]);
+    r.git(&["commit", "-q", "--allow-empty", "-m", "island"]);
+    r.git(&["checkout", "-q", "main"]);
+    r.set_origin_default("island", "island");
+    press(&mut app, &keymap, KeyCode::Char('G'));
+    assert_eq!(picker(&app).title, "commits · last 50");
+    assert_eq!(picker(&app).rows.len(), 4);
 }
 
 #[test]
@@ -7178,13 +7234,21 @@ fn a_poll_under_the_open_picker_reconciles_by_sha() {
     assert_eq!(picker(&app).rows.len(), 6);
     assert_eq!((picker(&app).cursor, picker(&app).anchor), (4, Some(3)));
     assert_eq!(picker(&app).list_row(4).unwrap().sha, shas[1]);
-    // The highlighted and anchored commits are rewritten away: the highlight clamps to
-    // the nearest surviving row and the anchor drops.
+    // A poll that leaves `HEAD` where it is re-lists nothing: the rows stay as they are.
+    r.write("six.rs", "6\n");
+    common::land_world(&mut app);
+    assert_eq!((picker(&app).cursor, picker(&app).anchor), (4, Some(3)));
+    // The anchored commit is rewritten away: the highlight keeps its sha and the anchor
+    // falls back to the nearest surviving row, so the run survives as a run.
+    r.git(&["reset", "-q", "--hard", &shas[1]]);
+    common::land_world(&mut app);
+    assert_eq!(picker(&app).rows.len(), 2);
+    assert_eq!((picker(&app).cursor, picker(&app).anchor), (0, Some(1)));
+    // Both gone: each clamps to the last row.
     r.git(&["reset", "-q", "--hard", &shas[0]]);
     common::land_world(&mut app);
     assert_eq!(picker(&app).rows.len(), 1);
-    assert_eq!(picker(&app).cursor, 0, "clamped to the last row");
-    assert_eq!(picker(&app).anchor, None, "the anchor's commit is gone");
+    assert_eq!((picker(&app).cursor, picker(&app).anchor), (0, Some(0)), "clamped to the last row");
 }
 
 #[test]

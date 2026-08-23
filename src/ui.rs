@@ -3198,96 +3198,100 @@ pub fn hit_base_picker_row(area: Rect, app: &App, col: u16, row: u16) -> Option<
 const COMMIT_SHA_W: usize = 7;
 const COMMIT_AGE_W: usize = 3;
 
-/// One picker row's text parts: `(sha, subject, trail, author, age)`, the pick row painted
-/// as the header paints the pick (`specs/input.md`). The trail is the row's dim facts,
-/// `·`-joined: `✎ N` for comments held on the commit, `merge`, and one ref.
-fn commit_row_parts(
-    app: &App,
-    cp: &crate::app::CommitPicker,
-    i: usize,
-) -> (String, String, String, String, String) {
-    if cp.is_pick_row(i) {
-        let (_, shown, marker, tail) = pick_label(app).unwrap_or_default();
-        let subject = format!("{}{tail}", marker.trim_start());
-        return (shown, subject, String::new(), String::new(), String::new());
+/// One picker row's text parts, the pick row painted as the header paints the pick
+/// (`specs/input.md`). The trail is the row's dim facts, `·`-joined: `✎ N` for comments
+/// held on the commit, `merge`, and one ref.
+struct CommitRowParts {
+    sha: String,
+    subject: String,
+    trail: String,
+    author: String,
+    age: String,
+}
+
+/// Every visible row's parts, built once per paint: the comment counts come from one pass
+/// over the store, and the author column's width from one pass over the rows.
+fn commit_row_parts(app: &App, cp: &crate::app::CommitPicker) -> Vec<CommitRowParts> {
+    let mut comments: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for c in app.store.iter() {
+        if let crate::model::Rev::Commit(sha) = &c.rev {
+            *comments.entry(sha.as_str()).or_default() += 1;
+        }
     }
-    let row = cp.list_row(i).expect("a visible index names a row");
-    let mut trail: Vec<String> = Vec::new();
-    let comments =
-        app.store.iter().filter(|c| c.rev == crate::model::Rev::Commit(row.sha.clone())).count();
-    if comments > 0 {
-        trail.push(format!("✎ {comments}"));
-    }
-    if row.merge {
-        trail.push("merge".to_string());
-    }
-    trail.extend(commit_ref(app, row));
-    (
-        git::abbreviate_oid(&row.sha),
-        row.subject.clone(),
-        trail.join(" · "),
-        row.author.clone(),
-        age_label(row.time, now_unix()),
-    )
+    let now = now_unix();
+    (0..cp.len())
+        .map(|i| {
+            if cp.is_pick_row(i) {
+                let (_, shown, marker, tail) = pick_label(app).unwrap_or_default();
+                return CommitRowParts {
+                    sha: shown,
+                    subject: format!("{}{tail}", marker.trim_start()),
+                    trail: String::new(),
+                    author: String::new(),
+                    age: String::new(),
+                };
+            }
+            let row = cp.list_row(i).expect("a visible index names a row");
+            let mut trail: Vec<String> = Vec::new();
+            if let Some(n) = comments.get(row.sha.as_str()) {
+                trail.push(format!("✎ {n}"));
+            }
+            if row.merge {
+                trail.push("merge".to_string());
+            }
+            trail.extend(commit_ref(app, row));
+            CommitRowParts {
+                sha: git::abbreviate_oid(&row.sha),
+                subject: row.subject.clone(),
+                trail: trail.join(" · "),
+                author: row.author.clone(),
+                age: crate::forge::age_label(now.saturating_sub(row.time)),
+            }
+        })
+        .collect()
 }
 
 /// The one ref a row shows, by what the reviewer wants to know first: `pr` when the open
 /// PR's head is this commit, else a remote tip (it is pushed), else a tag, else another
 /// local branch (`specs/input.md`).
 fn commit_ref(app: &App, row: &git::CommitRow) -> Option<String> {
+    use git::CommitRef as R;
     if app
         .pr_snapshot()
         .is_some_and(|s| s.state == crate::forge::PrState::Open && s.head_oid == row.sha)
     {
         return Some("pr".to_string());
     }
-    let rank = |r: &String| {
-        if r.contains('/') {
-            0
-        } else if r.starts_with("tag: ") {
-            1
-        } else {
-            2
-        }
+    let rank = |r: &R| match r {
+        R::Remote(_) => 0,
+        R::Tag(_) => 1,
+        R::Branch(_) => 2,
     };
-    row.refs.iter().min_by_key(|r| rank(r)).cloned()
+    row.refs.iter().min_by_key(|r| rank(r)).map(R::label)
 }
 
 /// The author column's width: the widest author, capped so a long name cannot push the
 /// subjects off the popup.
-fn commit_author_width(app: &App, cp: &crate::app::CommitPicker) -> usize {
+fn commit_author_width(parts: &[CommitRowParts]) -> usize {
     const CAP: usize = 20;
-    (0..cp.len()).map(|i| commit_row_parts(app, cp, i).3.width()).max().unwrap_or(0).min(CAP)
+    parts.iter().map(|p| p.author.width()).max().unwrap_or(0).min(CAP)
 }
 
 fn now_unix() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// A compact relative age: `5m`, `2h`, `3d`, `6w`, `2y` (`specs/input.md`).
-fn age_label(at: u64, now: u64) -> String {
-    let secs = now.saturating_sub(at);
-    let (n, unit) = match secs {
-        s if s < 3600 => (s / 60, "m"),
-        s if s < 86_400 => (s / 3600, "h"),
-        s if s < 7 * 86_400 => (s / 86_400, "d"),
-        s if s < 365 * 86_400 => (s / (7 * 86_400), "w"),
-        s => (s / (365 * 86_400), "y"),
-    };
-    format!("{n}{unit}")
-}
-
-fn commit_picker_popup(area: Rect, app: &App) -> Rect {
+fn commit_picker_popup(area: Rect, app: &App, parts: &[CommitRowParts]) -> Rect {
     let Some(cp) = &app.commit_picker else { return Rect::default() };
-    let author_w = commit_author_width(app, cp);
-    let widest = (0..cp.len())
-        .map(|i| {
-            let (sha, subject, trail, _, _) = commit_row_parts(app, cp, i);
-            let trail_w = if trail.is_empty() { 0 } else { 2 + trail.width() };
+    let author_w = commit_author_width(parts);
+    let widest = parts
+        .iter()
+        .map(|p| {
+            let trail_w = if p.trail.is_empty() { 0 } else { 2 + p.trail.width() };
             // bar + sha + gap + subject + trail + gap + author + gap + age
-            2 + sha.width().max(COMMIT_SHA_W)
+            2 + p.sha.width().max(COMMIT_SHA_W)
                 + 2
-                + subject.width()
+                + p.subject.width()
                 + trail_w
                 + 2
                 + author_w
@@ -3312,7 +3316,8 @@ fn commit_picker_scroll(cp: &crate::app::CommitPicker, height: usize) -> usize {
 fn render_commit_picker(frame: &mut Frame, app: &App, area: Rect) {
     let Some(cp) = &app.commit_picker else { return };
     let p = app.palette();
-    let popup = commit_picker_popup(area, app);
+    let parts = commit_row_parts(app, cp);
+    let popup = commit_picker_popup(area, app, &parts);
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -3332,10 +3337,10 @@ fn render_commit_picker(frame: &mut Frame, app: &App, area: Rect) {
     let rows = commit_picker_rows(cp, inner.height as usize);
     let first = commit_picker_scroll(cp, inner.height as usize);
     let last = cp.len().min(first + rows);
-    let author_w = commit_author_width(app, cp);
+    let author_w = commit_author_width(&parts);
     let mut items: Vec<ListItem> = (first..last)
         .map(|i| {
-            let (sha, subject, trail, author, age) = commit_row_parts(app, cp, i);
+            let CommitRowParts { sha, subject, trail, author, age } = &parts[i];
             // The bar marks the run, the way the diff's selection bar marks a line range.
             let bar = if cp.in_run(i) { "▎" } else { " " };
             // The author column is right-aligned to one edge before the age, so the
@@ -3343,14 +3348,14 @@ fn render_commit_picker(frame: &mut Frame, app: &App, area: Rect) {
             let fixed = 2 + COMMIT_SHA_W + 2 + 2 + author_w + 2 + COMMIT_AGE_W;
             // The subject is the one bright part and clips first; the trail clips after it
             // and only ever takes what the subject leaves (`specs/input.md`).
-            let subject = truncate_width(&subject, width.saturating_sub(fixed));
+            let subject = truncate_width(subject, width.saturating_sub(fixed));
             let room = width.saturating_sub(fixed + subject.width());
             let trail = if trail.is_empty() || room < 4 {
                 String::new()
             } else {
-                format!("  {}", truncate_width(&trail, room - 2))
+                format!("  {}", truncate_width(trail, room - 2))
             };
-            let author = truncate_width(&author, author_w);
+            let author = truncate_width(author, author_w);
             let pad = width.saturating_sub(fixed + subject.width() + trail.width()) + 2;
             let spans = vec![
                 Span::styled(format!("{bar} "), Style::default().fg(p.yellow)),
@@ -3378,7 +3383,7 @@ fn render_commit_picker(frame: &mut Frame, app: &App, area: Rect) {
 /// The commit-picker row under the pointer (`specs/input.md`).
 pub fn hit_commit_picker_row(area: Rect, app: &App, col: u16, row: u16) -> Option<usize> {
     let cp = app.commit_picker.as_ref()?;
-    let inner = picker_inner(commit_picker_popup(area, app));
+    let inner = picker_inner(commit_picker_popup(area, app, &commit_row_parts(app, cp)));
     let first = commit_picker_scroll(cp, inner.height as usize);
     // The `… more` line is not a row: a click on it is inert.
     let shown = cp.len().min(first + commit_picker_rows(cp, inner.height as usize));

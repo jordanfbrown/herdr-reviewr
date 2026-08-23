@@ -3843,6 +3843,13 @@ fn a_row_shows_one_ref_by_what_matters_most() {
     let two = out.lines().skip(1).find(|l| l.contains(&shas[2][..7])).unwrap();
     assert!(two.contains("other"), "a lone local branch shows: {two}");
     app.close_commit_picker();
+    r.git(&["branch", "feat/two", &shas[2]]);
+    r.git(&["tag", "v0", &shas[2]]);
+    app.open_commit_picker();
+    let out = render(&app);
+    let two = out.lines().skip(1).find(|l| l.contains(&shas[2][..7])).unwrap();
+    assert!(two.contains("tag: v0") && !two.contains("feat/two"), "a slash is no remote: {two}");
+    app.close_commit_picker();
 
     // The open PR's head outranks every ref.
     app.pr = herdr_reviewr::forge::PrView::Pr(Box::new(herdr_reviewr::forge::PrSnapshot {

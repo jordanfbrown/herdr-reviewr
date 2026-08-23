@@ -1264,13 +1264,19 @@ pub fn relative_age(created_at: &str, now: SystemTime) -> String {
         return String::new();
     };
     let now = now.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
-    let secs = (now - then).max(0);
+    age_label((now - then).max(0) as u64)
+}
+
+/// A compact age from a span in seconds: `30s`, `5m`, `2h`, `3d`, `6w`, `2y`. The one
+/// bucketing for the PR nav and the commit picker (specs/input.md).
+pub fn age_label(secs: u64) -> String {
     match secs {
         s if s < 60 => format!("{s}s"),
         s if s < 3600 => format!("{}m", s / 60),
         s if s < 86_400 => format!("{}h", s / 3600),
         s if s < 604_800 => format!("{}d", s / 86_400),
-        s => format!("{}w", s / 604_800),
+        s if s < 365 * 86_400 => format!("{}w", s / 604_800),
+        s => format!("{}y", s / (365 * 86_400)),
     }
 }
 

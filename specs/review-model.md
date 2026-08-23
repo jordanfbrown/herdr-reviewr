@@ -82,17 +82,17 @@ The `commits` scope diffs a picked run of commits, oldest `A` to newest `B`, as 
 - A merge commit in the run contributes its tree change like any other commit.
 - A run whose oldest commit is a root commit diffs against the empty tree.
 - A pick is `off branch` once any of its commits is unreachable from `HEAD`. It keeps painting, and the header marks it (`tui.md`). A base change never marks a pick.
-- A pick is `gone` once the repository has pruned any commit it needs, `A^` included. The scope is then empty, the header marks it, and the footer offers the picker (`input.md`).
+- A pick is `gone` once the repository has pruned any commit it needs, `A^` included. A shallow clone's cut counts as pruned. The scope is then empty, the header marks it, and the footer offers the picker (`input.md`).
 - The pick's `off branch` and `gone` verdicts land with the changeset they head, from one build (`tui.md`).
 - A re-pick rebuilds the changeset on the next frame, never waiting for a poll.
 - `All files` marks the files the run touched. Its tree still lists the worktree, so a file the run added and a later commit removed has no row.
 
-The picker's universe is the branch over its base:
+The picker's universe is the branch over its base, along the first-parent walk from `HEAD`, so any contiguous run of rows is one ancestor chain. A side branch's commits sit behind their merge row, never as rows of their own.
 
-| base        | commits listed                                   |
-| ----------- | ------------------------------------------------ |
-| resolves    | `merge-base..HEAD`, newest first                 |
-| none        | the last 50 reachable from `HEAD`, newest first  |
+| base                       | commits listed                                   |
+| -------------------------- | ------------------------------------------------ |
+| resolves, has a merge-base | `merge-base..HEAD`, newest first                 |
+| none, or no merge-base     | the last 50 reachable from `HEAD`, newest first  |
 
 ### Ignored paths
 
