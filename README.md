@@ -27,9 +27,8 @@ One persistent pane, pointed at a git worktree:
 - **Markdown preview** — flip a `.md` file between source and rendered view.
 - **Themes** — 18 palettes in dark and light.
 
-It never edits your worktree and sends nothing on its own. Its only git writes are private
-refs under `refs/reviewr/`. The **PR** tab reads GitHub, GitLab, or Azure DevOps and never
-posts.
+It never edits your worktree and sends nothing on its own. The **PR** tab reads GitHub,
+GitLab, or Azure DevOps and never posts.
 
 ## Requirements
 
@@ -219,7 +218,7 @@ toggle_placement = "overlay"
 toggle_direction = "down"
 auto_open = false
 github_host = "github.example.com"
-editor = "code --wait -g {file}:{line}"
+editor = "code -g {file}:{line}"
 
 [keybindings]
 comment = ["c", "ㅊ"]
@@ -244,8 +243,7 @@ theme = "tokyo-night"
 - **Light:** `catppuccin-latte`, `gruvbox-light`, `one-light`, `solarized-light`,
   `github-light`, `tokyo-night-day`, `rose-pine-dawn`.
 
-Names match herdr's where both ship a palette. An unknown name is an error. The standalone
-`--theme` flag keeps its older fallback to `catppuccin`.
+Names match herdr's where both ship a palette.
 
 ### Navigator position
 
@@ -268,43 +266,29 @@ When the trunk is something else, or you review a stacked branch, press `B` (or 
 base name) and pick the branch. The pick is stored in the repo, shared by every reviewr pane
 on it, and holds until you pick again. Choosing the default branch clears it.
 
-You can also type any revision — `HEAD~2`, a tag, a SHA prefix. Named spellings re-resolve
-like git, a SHA pins its commit, and the header shows what resolved: `vs HEAD~2 (a1b2c3d)`.
+You can also type any revision, like `HEAD~2`, a tag, or a SHA prefix. The header shows what
+resolved: `vs HEAD~2 (a1b2c3d)`.
 
-`--base <ref>` sets the base for this pane and takes any rev (a branch, a tag, a SHA,
-`HEAD~1`). It wins over the pick and disables the picker.
-
-A picked branch that is gone (deleted after a stacked review, or a typo) is skipped, and the
-header says so: `vs main · dev missing`. When nothing resolves, the scope stays empty and the
-header reads `no base`, with the footer offering `B pick base`.
+`--base <ref>` sets the base for this pane. It wins over the pick and disables the picker.
 
 ### Editor
 
 `e` opens the file at the line you're on, or the navigator's selected file. On a line you have
 already commented, `e` edits the comment instead.
 
-Set `$EDITOR` (or `$VISUAL`). reviewr knows how each editor wants its line number and keeps the
-flags you set yourself:
-
-| editor | how it's called |
-| --- | --- |
-| vim, nvim, MacVim, gVim, nano, micro, kakoune, emacs, BBEdit, gedit, Mint's xed | `+41 path` |
-| helix, Zed (`zed`/`zeditor`/`zedit`), Sublime Text | `path:41` |
-| VS Code and its forks (Cursor, Windsurf, VSCodium, Insiders, Positron) | `-g path:41` |
-| JetBrains IDEs, Xcode (`xed`), TextMate, Kate | `--line 41 path` |
+Set `$EDITOR` (or `$VISUAL`) and reviewr opens it at the right line. It knows vim, neovim,
+helix, emacs, nano, VS Code and its forks, Zed, Sublime Text, JetBrains, and the rest of the
+usual set.
 
 A terminal editor takes the pane, and reviewr refreshes when you quit it. A window editor opens
 its own window, so the diff stays up and your save turns up in it on the next poll.
 
-For an editor that is not listed, spell out the command. `{file}` and `{line}` are reviewr's and
-everything else is your editor's. No shell runs the line, so quote a path with a space in it.
+Write the command yourself when you need to. `{file}` and `{line}` are reviewr's, everything
+else is your editor's:
 
 ```toml
-editor = "/Applications/Zed.app/Contents/MacOS/cli --wait {file}:{line}"
+editor = "code -g {file}:{line}"
 ```
-
-A `--wait` or `--block` in the command tells reviewr the editor opens a window. Under a binary
-name like `cli`, that is the only way it can tell.
 
 ### Keybindings
 
@@ -350,14 +334,12 @@ The action names and their defaults:
 | `quit` | `q` |
 
 A key is one printable character, or a `ctrl+`/`alt+` chord like `ctrl+f`. `Tab`, `Esc`, and
-`Enter` are fixed. Keys still type normally in the comment box. Two actions sharing a key
-invalidates the file. `list-wider` and `list-narrower` stay accepted as aliases for
-`navigator-grow` and `navigator-shrink`.
+`Enter` are fixed. Keys still type normally in the comment box.
 
 ### Forge repositories and hosts
 
-A remote named exactly `upstream` with a recognized forge fetch URL wins. Otherwise the PR tab
-reads `origin`. A standard fork clone works without setup.
+The PR tab reads `upstream` when you have one, otherwise `origin`. A standard fork clone works
+without setup.
 
 GitHub.com, GitLab.com, dev.azure.com, and the `*.visualstudio.com` organization hosts work
 without configuration. For one self-hosted instance per forge, set its bare hostname:
@@ -463,9 +445,6 @@ The known constraints:
   failure leaves everything in place.
 - **No line-number rebasing** — a comment stays locatable by its diff snippet, not its line
   number. reviewr flags a stale comment instead of dropping it.
-- **Two panes on one worktree drift a little** — they agree on turn boundaries, but each
-  snapshots on its own poll clock, so their last-turn baselines can differ by the edits made
-  between the two samples.
 
 **Budgets**
 - Files over 2 MB or 50,000 lines show a "too large" notice. Binary files get no diff.
