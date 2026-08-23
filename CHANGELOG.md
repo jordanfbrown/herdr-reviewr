@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`commits` scope.** `G` picks one commit or a run, the `Changes` tab shows just that diff, and
+  comments made there stay on their commit. `g` switches back to the pick.
+
+### Changed
+- **Footer vocabulary.** One word per meaning everywhere: `move`, `open`, `select`. `B` now
+  works in every scope and opens the base picker, like `G`.
+
 ## [0.35.0] — 2026-08-23
 
 ### Added
