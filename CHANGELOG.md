@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.35.0] — 2026-08-23
+
 ### Added
 - **`e` opens the file at the line you're on, in your editor.** Set `$EDITOR` and it works, or
   set the new `editor` key to spell out the command yourself.
