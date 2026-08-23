@@ -83,6 +83,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         Mode::List => Some(render_comments_list),
         Mode::Picker => Some(render_agent_picker),
         Mode::BasePick => Some(render_base_picker),
+        Mode::CommitPick => Some(render_commit_picker),
         Mode::Normal | Mode::Composing { .. } | Mode::Search | Mode::Find => None,
     };
     if let Some(render_popup) = popup {
@@ -1261,6 +1262,8 @@ pub enum HeaderHit {
     Scope,
     /// The `branch` scope's base label; the click opens the base picker (`specs/tui.md`).
     Base,
+    /// The `commits` scope's pick name; the click opens the commit picker (`specs/tui.md`).
+    Pick,
 }
 
 /// Which header control a click at `(col, row)` lands on, if any. `keymap` must be the keymap
@@ -1287,7 +1290,11 @@ pub fn hit_header(area: Rect, app: &App, keymap: &Keymap, col: u16, row: u16) ->
         let base_start = scope_end + BASE_GAP.len() as u16;
         let base_end = base_start + (lead.width() + name.width() + tail.width()) as u16;
         if (base_start..base_end).contains(&col) {
-            return Some(HeaderHit::Base);
+            return Some(if app.scope == crate::model::Scope::Commits {
+                HeaderHit::Pick
+            } else {
+                HeaderHit::Base
+            });
         }
     }
     None
@@ -1348,6 +1355,9 @@ fn scope_chip(app: &App) -> String {
 /// The `branch` scope's base label as `(lead, shown, marker, tail)` (`specs/tui.md`).
 /// `shown` is the spelling or a SHA-once abbrev. `marker` is ` (sha)` for a named rev.
 fn base_label(app: &App) -> Option<(String, String, String, String)> {
+    if app.scope == crate::model::Scope::Commits {
+        return pick_label(app);
+    }
     if app.scope != crate::model::Scope::Branch {
         return None;
     }
@@ -1367,6 +1377,32 @@ fn base_label(app: &App) -> Option<(String, String, String, String)> {
     })
 }
 
+/// The `commits` scope's pick label in `base_label`'s shape (`specs/tui.md`): a run of one
+/// reads `1a2b3c4 <subject>`, a longer run `896626a..a49ed7b (N)`, and the verdict rides the
+/// tail as ` · off branch` or ` · gone`. The lead is empty: the chip already says `commits`.
+/// The sha and the marker survive truncation; the subject clips.
+fn pick_label(app: &App) -> Option<(String, String, String, String)> {
+    use crate::world::PickVerdict;
+    let pick = app.commit_pick.as_ref()?;
+    let status = app.pick_status.as_ref();
+    let tail = match status.map(|s| &s.verdict) {
+        Some(PickVerdict::OffBranch) => " · off branch".to_string(),
+        Some(PickVerdict::Gone(_)) => " · gone".to_string(),
+        Some(PickVerdict::Live) | None => String::new(),
+    };
+    let shown = if pick.is_single() {
+        git::abbreviate_oid(&pick.newest)
+    } else {
+        format!("{}..{}", git::abbreviate_oid(&pick.oldest), git::abbreviate_oid(&pick.newest))
+    };
+    let marker = match status {
+        Some(s) if pick.is_single() && !s.subject.is_empty() => format!(" {}", s.subject),
+        _ if pick.is_single() => String::new(),
+        _ => format!(" ({})", status.map_or(0, |s| s.count)),
+    };
+    Some((String::new(), shown, marker, tail))
+}
+
 /// The base label as painted: truncated with a trailing `…` to what the header can fit,
 /// the name first and the skipped tail only in what remains, so a long missing name can
 /// never evict the resolved base (`specs/tui.md`) — one source for the paint and the
@@ -1383,7 +1419,17 @@ fn base_parts(app: &App, keymap: &Keymap, width: u16) -> Option<(String, String,
         + 1;
     let budget = (width as usize).saturating_sub(fixed);
     let marker_w = marker.width();
-    let name = if marker_w > 0 && budget > marker_w {
+    let name = if app.scope == crate::model::Scope::Commits {
+        // The sha is the identity and the subject is the marker, so the subject clips
+        // first and the sha stays whole. The verdict tail is reserved before the subject,
+        // so `· gone` can never be the part that falls off (`specs/tui.md`).
+        let tail_w = tail.width();
+        if budget > shown.width() + tail_w {
+            format!("{shown}{}", truncate_width(&marker, budget - shown.width() - tail_w))
+        } else {
+            truncate_width(&shown, budget.saturating_sub(tail_w))
+        }
+    } else if marker_w > 0 && budget > marker_w {
         format!("{}{marker}", truncate_width(&shown, budget - marker_w))
     } else {
         truncate_width(&format!("{shown}{marker}"), budget)
@@ -1456,7 +1502,7 @@ fn render_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
     if let Some((lead, name, tail)) = base {
         // An empty lead is the `no base` state, worn as a warning; a resolved name wears the
         // clickable accent, and the skipped tail warns beside it (`specs/tui.md`).
-        let warn = lead.is_empty();
+        let warn = lead.is_empty() && app.scope != crate::model::Scope::Commits;
         spans.push(Span::styled(BASE_GAP, bar));
         spans.push(Span::styled(lead, bar.fg(p.dim2)));
         spans.push(Span::styled(name, bar.fg(if warn { p.orange } else { p.blue })));
@@ -1485,9 +1531,11 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block, area);
 
     if app.file_rows.is_empty() {
+        let gone = app.commits_gone_message();
         let msg = match app.tab {
             Tab::AllFiles => "no files",
             Tab::Changes if app.awaiting_turn() => app.turn_wait_message(),
+            Tab::Changes if app.commits_gone() => gone.as_str(),
             _ => "no changes",
         };
         frame.render_widget(dim_paragraph(msg, p), inner);
@@ -1766,6 +1814,7 @@ fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
     if app.visible.is_empty() {
         // `All files` is a content browser, not a diff, so its empty/notice copy avoids diff
         // vocabulary and never shows the last-turn "waiting" state.
+        let gone = app.commits_gone_message();
         let msg = match app.tab {
             Tab::AllFiles => match app.diff.state {
                 FileState::Binary => "binary — no line comments",
@@ -1774,6 +1823,7 @@ fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
                 FileState::Normal => "select a file to read",
             },
             Tab::Changes if app.awaiting_turn() => app.turn_wait_message(),
+            Tab::Changes if app.commits_gone() => gone.as_str(),
             _ => match app.diff.state {
                 FileState::Binary => "binary — no line comments",
                 FileState::TooLarge => "file too large to diff",
@@ -2456,10 +2506,11 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
         }
         A::Scope => (
             format!(
-                "{}/{}/{}",
+                "{}/{}/{}/{}",
                 hint(K::ScopeUncommitted),
                 hint(K::ScopeBranch),
-                hint(K::ScopeLastTurn)
+                hint(K::ScopeLastTurn),
+                hint(K::ScopeCommits)
             ),
             "scope",
         ),
@@ -2475,6 +2526,17 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
         // read off the keymap like every other hint (`specs/input.md`).
         A::MovePickerRow => (format!("1-9 {} {}", hint(K::Down), hint(K::Up)), "move"),
         A::BasePick => (hint(K::BasePick), "pick base"),
+        A::CommitPick => (hint(K::CommitPick), "pick commits"),
+        A::PickCommitRun => {
+            let n = app.commit_picker.as_ref().map_or(0, crate::app::CommitPicker::run_len);
+            return ("enter".into(), if n > 1 { format!("pick {n}") } else { "pick".into() });
+        }
+        A::MoveCommitRow => (format!("{} {}", hint(K::Down), hint(K::Up)), "move"),
+        A::CommitAnchor => (hint(K::Select), "anchor"),
+        A::CloseCommitPicker => {
+            let anchored = app.commit_picker.as_ref().is_some_and(|cp| cp.anchor.is_some());
+            ("esc".into(), if anchored { "clear" } else { "cancel" })
+        }
         A::PickBaseRow => ("enter".into(), "pick"),
         // Every printable is filter text in the base picker, so only the arrows move
         // (`specs/input.md` Base picker).
@@ -2485,6 +2547,7 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
                 (Scope::Uncommitted, K::ScopeUncommitted),
                 (Scope::Branch, K::ScopeBranch),
                 (Scope::LastTurn, K::ScopeLastTurn),
+                (Scope::Commits, K::ScopeCommits),
             ]
             .into_iter()
             .filter(|(scope, _)| app.scope != *scope)
@@ -3123,6 +3186,113 @@ pub fn hit_base_picker_row(area: Rect, app: &App, col: u16, row: u16) -> Option<
     let inner = picker_inner(base_picker_popup(area, app));
     let first = base_picker_scroll(bp, inner.height.saturating_sub(1) as usize);
     menu_hit(inner, 1, first, bp.visible().len(), col, row)
+}
+
+// --- Commit picker (specs/input.md Commit picker) -------------------------------------------
+
+/// The bar column, the sha, two spaces, the subject, two spaces, the age.
+const COMMIT_SHA_W: usize = 7;
+const COMMIT_AGE_W: usize = 3;
+
+/// One picker row's text parts: `(sha, subject, age)`, the pick row painted as the header
+/// paints the pick (`specs/input.md`).
+fn commit_row_parts(
+    app: &App,
+    cp: &crate::app::CommitPicker,
+    i: usize,
+) -> (String, String, String) {
+    if cp.is_pick_row(i) {
+        let (_, shown, marker, tail) = pick_label(app).unwrap_or_default();
+        return (shown, format!("{}{tail}", marker.trim_start()), String::new());
+    }
+    let row = cp.list_row(i).expect("a visible index names a row");
+    (git::abbreviate_oid(&row.sha), row.subject.clone(), age_label(row.time, now_unix()))
+}
+
+fn now_unix() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// A compact relative age: `5m`, `2h`, `3d`, `6w`, `2y` (`specs/input.md`).
+fn age_label(at: u64, now: u64) -> String {
+    let secs = now.saturating_sub(at);
+    let (n, unit) = match secs {
+        s if s < 3600 => (s / 60, "m"),
+        s if s < 86_400 => (s / 3600, "h"),
+        s if s < 7 * 86_400 => (s / 86_400, "d"),
+        s if s < 365 * 86_400 => (s / (7 * 86_400), "w"),
+        s => (s / (365 * 86_400), "y"),
+    };
+    format!("{n}{unit}")
+}
+
+fn commit_picker_popup(area: Rect, app: &App) -> Rect {
+    let Some(cp) = &app.commit_picker else { return Rect::default() };
+    let widest = (0..cp.len())
+        .map(|i| {
+            let (sha, subject, _) = commit_row_parts(app, cp, i);
+            // bar + sha + gap + subject + gap + age
+            2 + sha.width().max(COMMIT_SHA_W) + 2 + subject.width() + 2 + COMMIT_AGE_W
+        })
+        .max()
+        .unwrap_or(0);
+    menu_popup(area, app, widest, &cp.title, cp.len().max(1) + 2)
+}
+
+fn commit_picker_scroll(cp: &crate::app::CommitPicker, rows: usize) -> usize {
+    menu_scroll(cp.cursor, cp.len(), rows)
+}
+
+fn render_commit_picker(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(cp) = &app.commit_picker else { return };
+    let p = app.palette();
+    let popup = commit_picker_popup(area, app);
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(p.purple))
+        .title(framed_title(&cp.title));
+    let inner = picker_inner(popup);
+    frame.render_widget(block, popup);
+    if inner.height == 0 {
+        return;
+    }
+    if cp.is_empty() {
+        let msg = format!(" {}", cp.empty);
+        frame.render_widget(Paragraph::new(Span::styled(msg, Style::default().fg(p.dim2))), inner);
+        return;
+    }
+    let width = inner.width as usize;
+    let first = commit_picker_scroll(cp, inner.height as usize);
+    let items: Vec<ListItem> = (first..cp.len().min(first + inner.height as usize))
+        .map(|i| {
+            let (sha, subject, age) = commit_row_parts(app, cp, i);
+            // The bar marks the run, the way the diff's selection bar marks a line range.
+            let bar = if cp.in_run(i) { "▎" } else { " " };
+            let fixed = 2 + COMMIT_SHA_W + 2 + 2 + COMMIT_AGE_W;
+            let subject = truncate_width(&subject, width.saturating_sub(fixed));
+            let pad = width.saturating_sub(fixed + subject.width()) + 2;
+            let spans = vec![
+                Span::styled(format!("{bar} "), Style::default().fg(p.yellow)),
+                Span::styled(format!("{sha:<COMMIT_SHA_W$}  "), Style::default().fg(p.blue)),
+                Span::styled(subject, text_style(p)),
+                Span::styled(
+                    format!("{}{age:>COMMIT_AGE_W$}", " ".repeat(pad)),
+                    Style::default().fg(p.dim2),
+                ),
+            ];
+            selectable_row(p, spans, width, (i == cp.cursor).then_some(p.surface2))
+        })
+        .collect();
+    frame.render_widget(List::new(items), inner);
+}
+
+/// The commit-picker row under the pointer (`specs/input.md`).
+pub fn hit_commit_picker_row(area: Rect, app: &App, col: u16, row: u16) -> Option<usize> {
+    let cp = app.commit_picker.as_ref()?;
+    let inner = picker_inner(commit_picker_popup(area, app));
+    let first = commit_picker_scroll(cp, inner.height as usize);
+    menu_hit(inner, 0, first, cp.len(), col, row)
 }
 
 // --- Search screen (specs/search.md) -------------------------------------------------------
