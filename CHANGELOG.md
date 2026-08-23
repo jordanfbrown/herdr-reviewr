@@ -7,14 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-- **`e` opens the file you're looking at in your editor.** From the diff, **All files**, or the
-  navigator, `e` opens that file at the line under the cursor. On a line you've already commented,
-  `e` still edits the comment. A terminal editor takes over the pane and reviewr refreshes when you
-  quit it. A window editor opens beside you, so the diff stays on screen and your change shows up
-  once you save. Set `$EDITOR` and it works: reviewr knows how vim, helix, VS Code, Cursor, Zed,
-  Sublime, the JetBrains IDEs, and others want their line number, and adds nothing else. The new
-  `editor` config key takes a `{file}`/`{line}` template for anything else — write `--wait` in it
-  and reviewr knows to leave the pane alone even for an editor it can't place.
+- **`e` opens the file at the line you're on, in your editor.** Set `$EDITOR` and it works, or
+  set the new `editor` key to spell out the command yourself.
   Shaped by @trsxxii (#33) and @jorgerojas26 (#79).
 
 ## [0.34.1] — 2026-08-22

@@ -369,6 +369,10 @@ mod tests {
 
         // An unterminated quote closes at the end rather than dropping the word.
         assert_eq!(env("\"/opt/my editor").unwrap().program, "/opt/my editor");
+
+        // A closed empty quote is a word, so it can be the one in program position. Dropping
+        // that distinction would silently run the second word as the editor instead.
+        assert_eq!(resolve(None, None, Some("'' vim"), &p(), 41), Err(NoEditor::NamesNoProgram));
     }
 
     #[test]

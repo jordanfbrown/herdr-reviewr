@@ -268,15 +268,18 @@ def main():
               env.get("path", "").startswith(os.environ.get("PATH", "").split(":")[0]),
               f"path={env.get('path', '')[:80]}")
 
-        mark = len(s.seen)
-        s.press("r")
-        check("the first press after the return is honoured",
-              len(s.seen) > mark,
-              "`r` painted nothing, so the press was swallowed on the way back")
         check("the status names the edited file", b"edited" in plain(after))
 
+        # `q` is the first key sent after the pane comes back, so this is also what proves the
+        # return does not swallow one. Reading output instead would not: the status expires on
+        # its own clock and repaints regardless of whether the press was seen.
         s.press("q")
-        check("`q` still quits", s.proc.wait(timeout=10) == 0)
+        try:
+            quit_code = s.proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            quit_code = None
+        check("`q` still quits, so the return swallowed no keypress", quit_code == 0,
+              f"exit={quit_code}, and None means the pane never saw the key")
         s.close()
 
         # A window editor takes a different dialect and holds the file the way a reviewer does,

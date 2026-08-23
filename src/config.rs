@@ -596,9 +596,10 @@ fn unknown_placeholder(command: &str) -> Option<String> {
     while let Some(at) = rest.find('{') {
         rest = &rest[at + 1..];
         let Some(tail) = rest.strip_prefix("file}").or_else(|| rest.strip_prefix("line}")) else {
-            // Name what was typed, up to its close or the end of the value.
-            let end = rest.find('}').unwrap_or(rest.len());
-            return Some(format!("{{{}", &rest[..end]));
+            // Name what was typed, stopping at its close or at whatever ended it.
+            let end = rest.find(['{', '}']).unwrap_or(rest.len());
+            let closed = rest[end..].starts_with('}');
+            return Some(format!("{{{}{}", &rest[..end], if closed { "}" } else { "" }));
         };
         rest = tail;
     }
@@ -764,6 +765,15 @@ mod tests {
         assert_eq!(config.editor(), Some("code -g {file}:{line}"));
 
         assert_eq!(config.to_json()["editor"], "code -g {file}:{line}");
+
+        // A value naming no placeholder is valid: the path is appended to it
+        // (`specs/config.md`). A tightening that demanded `{file}` would block the whole file
+        // for anyone who spelled their editor the short way.
+        for value in ["vim", "myed --at {line}"] {
+            std::fs::write(&path, format!("editor = \"{value}\"\n")).unwrap();
+            let config = super::plugin_config_in(dir.path()).expect(value);
+            assert_eq!(config.editor(), Some(value));
+        }
 
         // Unset, the key resolves to null and the environment supplies the editor instead
         // (`specs/input.md` Edit).
