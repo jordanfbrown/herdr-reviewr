@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 
 use crate::diff::{DiffCache, FileDiff, Row, View};
-use crate::export::{Agent, ExportTarget, format_all};
+use crate::export::{Agent, ExportTarget, format_all, format_pr_conversation};
 use crate::file_list::{self, Annotation, Entry, RowKind};
 use crate::forge;
 use crate::git;
@@ -348,6 +348,14 @@ impl Mode {
             Mode::Composing { .. } | Mode::List | Mode::Picker | Mode::BasePick | Mode::CommitPick
         )
     }
+}
+
+/// The immutable bytes and completion semantics held from send intent through agent selection.
+#[derive(Clone, Debug)]
+struct PendingSend {
+    text: String,
+    success: String,
+    consume_authored: bool,
 }
 
 /// The search screen's mode: which result set the list shows (specs/search.md).
@@ -753,6 +761,8 @@ pub struct App {
     /// The agent this session last sent to, which arms the picker's highlight. Only a
     /// successful send sets it (`specs/herdr-host.md`).
     pub last_sent_pane: Option<String>,
+    /// Immutable payload and completion semantics captured before agent routing.
+    pending_send: Option<PendingSend>,
     /// The base picker's rows, filter, and highlight while `Mode::BasePick` is open
     /// (`specs/input.md` Base picker).
     pub base_picker: Option<BasePicker>,
@@ -933,6 +943,7 @@ impl App {
             picker_cursor: 0,
             picker_over: Mode::Normal,
             last_sent_pane: None,
+            pending_send: None,
             base_picker: None,
             mode: Mode::Normal,
             input: String::new(),
@@ -4198,6 +4209,9 @@ impl App {
             if self.pr_snapshot().is_some() {
                 out.push((A::OpenPr, Primary));
             }
+            if self.pr_selected_comment().is_some() {
+                out.push((A::Send, Send));
+            }
             out.push((A::Search, Go));
             out.push((A::TogglePane, Go));
             out.push((A::NavigatorPosition, Go));
@@ -4374,40 +4388,62 @@ impl App {
     }
 }
 
-/// The row the picker's highlight opens on: the agent this session sent to last, else the
-/// first row. The last-sent agent counts only while it is still a candidate, so a closed
-/// pane falls through (`specs/herdr-host.md`).
+/// The row the picker's highlight opens on: the last successful destination, else the first.
 fn armed_row(rows: &[AgentChoice], last_sent: Option<&str>) -> usize {
     last_sent.and_then(|pane| rows.iter().position(|row| row.pane_id == pane)).unwrap_or(0)
 }
 
 impl App {
     /// `Send`: one agent goes straight out, several open the picker, none refuses and names
-    /// the clipboard (`specs/herdr-host.md`). The empty-store refusal is repeated here, ahead
-    /// of [`Self::export`]'s own, so `Send` with nothing written shells out to no herdr call
-    /// and opens no picker.
+    /// the clipboard (`specs/herdr-host.md`). File-tab sends capture authored comments and
+    /// consume them only after delivery succeeds.
     pub fn send_to_agent(&mut self) {
         if self.store.is_empty() {
             self.status = "no comments to send".to_string();
             return;
         }
+        let refs: Vec<&Comment> = self.store.iter().collect();
+        let count = refs.len();
+        self.send_payload(PendingSend {
+            text: format_all(&refs),
+            success: format!("added {} {}", count, if count == 1 { "comment" } else { "comments" }),
+            consume_authored: true,
+        });
+    }
+
+    /// Send the selected PR conversation. The formatter runs before agent discovery so every
+    /// route, including the picker, holds exactly the bytes selected on this press.
+    pub fn send_pr_to_agent(&mut self) {
+        let Some((text, author)) = self
+            .pr_snapshot()
+            .zip(self.pr_selected_comment())
+            .map(|(pr, comment)| (format_pr_conversation(pr, comment), comment.author.clone()))
+        else {
+            return;
+        };
+        self.send_payload(PendingSend {
+            text,
+            success: format!("added conversation from @{author}"),
+            consume_authored: false,
+        });
+    }
+
+    fn send_payload(&mut self, payload: PendingSend) {
+        self.pending_send = Some(payload);
         match herdr::send_target() {
-            Ok(SendTarget::One(agent)) => self.export_to_agent(&agent),
+            Ok(SendTarget::One(agent)) => self.export_pending_to_agent(&agent),
             Ok(SendTarget::Many(rows)) => self.open_picker(rows),
-            // The refusal is already a whole sentence naming the cause and the clipboard, so a
-            // prefix would only spend the width the footer needs to show it.
-            Err(e) => self.status = e.to_string(),
+            Err(e) => {
+                self.pending_send = None;
+                self.status = e.to_string();
+            }
         }
     }
 
     /// Open the picker over `rows`, arming the highlight on the agent this session sent to
     /// last when it is still a candidate, else the first row (`specs/herdr-host.md`).
     pub fn open_picker(&mut self, rows: Vec<AgentChoice>) {
-        // A picker with no rows has nothing to choose and no `enter` that acts, and a second open
-        // over a live one would capture `Picker` as the mode to restore — either way a modal that
-        // swallows every key and that one `esc` cannot leave. The frozen row set also outranks a
-        // later one: it is what the reviewer is reading (`specs/herdr-host.md`).
-        if rows.is_empty() || self.mode == Mode::Picker {
+        if rows.is_empty() || self.mode == Mode::Picker || self.pending_send.is_none() {
             return;
         }
         self.picker_cursor = armed_row(&rows, self.last_sent_pane.as_deref());
@@ -4416,14 +4452,14 @@ impl App {
         self.mode = Mode::Picker;
     }
 
-    /// Close the picker back onto the view it opened over, so a reviewer who sent from the
-    /// comments list or with the find band open is not dropped into `Normal` (`specs/input.md`).
+    /// Close the picker back onto the view it opened over, discarding its frozen payload.
     pub fn close_picker(&mut self) {
         if self.mode == Mode::Picker {
             self.mode = std::mem::replace(&mut self.picker_over, Mode::Normal);
         }
         self.picker_rows.clear();
         self.picker_cursor = 0;
+        self.pending_send = None;
     }
 
     pub fn picker_move(&mut self, delta: isize) {
@@ -4432,21 +4468,41 @@ impl App {
         }
     }
 
-    /// Move the highlight to `row`, for a digit key or a click. A row past the end is inert
-    /// rather than clamped, so a mistyped digit never arms a neighbour (`specs/input.md`).
+    /// Move the highlight to `row`, for a digit key or a click.
     pub fn picker_goto(&mut self, row: usize) {
         if self.mode == Mode::Picker && row < self.picker_rows.len() {
             self.picker_cursor = row;
         }
     }
 
-    /// Send every comment to the highlighted agent, then close whatever the outcome. A
-    /// failure reports and keeps the comments, so the reviewer can reopen a fresh picker
-    /// rather than retry against a frozen row (`specs/herdr-host.md`).
+    /// Send the frozen payload to the chosen agent, then close whatever the outcome.
     pub fn picker_pick(&mut self) {
         let Some(agent) = self.picker_rows.get(self.picker_cursor).cloned() else { return };
+        self.export_pending_to_agent(&agent);
         self.close_picker();
-        self.export_to_agent(&agent);
+    }
+
+    fn export_pending_to_agent(&mut self, agent: &AgentChoice) {
+        let Some(payload) = self.pending_send.take() else { return };
+        let target = Agent { pane: agent.pane_id.clone(), name: agent.name.clone() };
+        logln!("export -> {} ::\n{}", target.label(), payload.text);
+        match target.export(&payload.text) {
+            Ok(()) => {
+                if payload.consume_authored {
+                    self.store.take_all();
+                    self.clamp_list_cursor();
+                    if self.store.is_empty() {
+                        self.close_list();
+                    }
+                }
+                self.last_sent_pane = Some(agent.pane_id.clone());
+                self.status = format!("{} to {}", payload.success, agent.name);
+            }
+            Err(e) => {
+                self.status = target.failure_message();
+                logln!("export ERR: {e:#}");
+            }
+        }
     }
 
     /// Whether the base picker can open here: a file tab and no `--base` flag, whatever the
@@ -4746,17 +4802,6 @@ impl App {
         fresh.cursor = cursor;
         fresh.anchor = anchor;
         self.commit_picker = Some(fresh);
-    }
-
-    /// Export to one decided pane. Nothing re-resolves it, so a pane that closed while the
-    /// picker was open fails here and keeps every comment (`specs/herdr-host.md`). Only a
-    /// delivery arms the next picker's highlight, and the pane comes from the row this send
-    /// addressed, so `last used` can never name a pane the export did not reach.
-    fn export_to_agent(&mut self, agent: &AgentChoice) {
-        let target = Agent { pane: agent.pane_id.clone(), name: agent.name.clone() };
-        if self.export(&target) {
-            self.last_sent_pane = Some(agent.pane_id.clone());
-        }
     }
 
     /// Send/copy every written comment to `target`; consume the whole set only on

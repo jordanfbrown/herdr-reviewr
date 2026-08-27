@@ -35,6 +35,36 @@ pub fn format_all(comments: &[&Comment]) -> String {
     sorted.iter().map(|c| format_comment(c)).collect::<Vec<_>>().join("\n\n")
 }
 
+/// One selected forge conversation as a self-contained agent prompt.
+pub fn format_pr_conversation(
+    pr: &crate::forge::PrSnapshot,
+    comment: &crate::forge::Comment,
+) -> String {
+    let kind = match comment.kind {
+        crate::forge::CommentKind::Review => "review",
+        crate::forge::CommentKind::Comment => "comment",
+        crate::forge::CommentKind::Finding => "finding",
+    };
+    let mut out = format!(
+        "Pull request #{}: {}\nURL: {}\n\nSelected {kind} by @{}",
+        pr.number, pr.title, pr.url, comment.author
+    );
+    if matches!(comment.kind, crate::forge::CommentKind::Finding) {
+        out.push_str(&format!("\nAnchor: {}", comment.anchor));
+        if let Some(snippet) = &comment.snippet {
+            out.push_str(&format!("\n\nDiff snippet:\n{snippet}"));
+        }
+    }
+    out.push_str("\n\nConversation:");
+    for message in &comment.messages {
+        out.push_str(&format!("\n\n@{}:\n{}", message.author, message.body));
+    }
+    if comment.conversation_truncated {
+        out.push_str("\n\nWarning: this conversation is truncated; open the PR URL for the remaining messages.");
+    }
+    out
+}
+
 /// A destination comments can be exported to. Export succeeds or errors as a whole.
 pub trait ExportTarget {
     fn export(&self, text: &str) -> Result<()>;
@@ -124,9 +154,6 @@ impl ExportTarget for Agent {
     fn label(&self) -> &'static str {
         "agent"
     }
-
-    /// Names the agent it addressed. The send is irreversible and consumes the whole set, so
-    /// this line is the reviewer's only record of where the review went (`specs/input.md`).
     fn success_message(&self, count: usize) -> String {
         format!("added {} to {}", counted_comments(count), self.name)
     }
@@ -150,8 +177,10 @@ impl ExportTarget for Agent {
 #[cfg(test)]
 mod tests {
     use super::{
-        Agent, CLIPBOARD_TOOLS, Clipboard, ExportTarget, format_all, format_comment, select_tool,
+        Agent, CLIPBOARD_TOOLS, Clipboard, ExportTarget, format_all, format_comment,
+        format_pr_conversation, select_tool,
     };
+    use crate::forge::{CommentKind, ThreadMessage};
     use crate::model::{Comment, Side};
 
     #[test]
@@ -207,6 +236,59 @@ mod tests {
         assert_eq!(
             format_comment(&c),
             "extruct/core/llm_registry.py:40-41\n-from .z import w\n+from .x import y\nthis import path looks wrong"
+        );
+    }
+
+    #[test]
+    fn pr_conversation_is_self_contained_and_ordered() {
+        let pr = crate::forge::PrSnapshot {
+            number: 42,
+            title: "Fix parser".into(),
+            url: "https://forge/pr/42".into(),
+            body: String::new(),
+            state: crate::forge::PrState::Open,
+            is_draft: false,
+            head_ref: String::new(),
+            head_is_fork: false,
+            head_oid: String::new(),
+            base_ref: String::new(),
+            merge: crate::forge::Merge::Clean,
+            sync: crate::forge::Sync::InSync,
+            checks: Vec::new(),
+            comments: Vec::new(),
+            truncated: false,
+        };
+        let comment = crate::forge::Comment {
+            id: "thread".into(),
+            kind: CommentKind::Finding,
+            author: "ann".into(),
+            author_is_bot: false,
+            anchor: "src/parser.rs:8-10".into(),
+            place: None,
+            body: "root".into(),
+            snippet: Some("+new".into()),
+            created_at: String::new(),
+            messages: vec![
+                ThreadMessage {
+                    author: "ann".into(),
+                    author_is_bot: false,
+                    body: "root".into(),
+                    created_at: String::new(),
+                },
+                ThreadMessage {
+                    author: "ben".into(),
+                    author_is_bot: false,
+                    body: "reply".into(),
+                    created_at: String::new(),
+                },
+            ],
+            conversation_truncated: true,
+            is_resolved: false,
+            is_outdated: false,
+        };
+        assert_eq!(
+            format_pr_conversation(&pr, &comment),
+            "Pull request #42: Fix parser\nURL: https://forge/pr/42\n\nSelected finding by @ann\nAnchor: src/parser.rs:8-10\n\nDiff snippet:\n+new\n\nConversation:\n\n@ann:\nroot\n\n@ben:\nreply\n\nWarning: this conversation is truncated; open the PR URL for the remaining messages."
         );
     }
 

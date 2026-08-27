@@ -2564,7 +2564,14 @@ fn action_key_label(app: &App, action: FooterAction) -> (String, String) {
             ),
             "scope",
         ),
-        A::Send => return (hint(K::Send), format!("send {}", app.store.len())),
+        A::Send => {
+            let label = if app.tab == Tab::Pr {
+                "send conversation".to_string()
+            } else {
+                format!("send {}", app.store.len())
+            };
+            return (hint(K::Send), label);
+        }
         A::List => (hint(K::Comments), "comments"),
         A::Copy => (hint(K::Copy), "copy"),
         A::Save => ("enter".into(), "save"),

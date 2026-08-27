@@ -56,7 +56,7 @@ The keymap is rebindable per action through `[keybindings]` in the plugin config
 | `search`                                                                   | open the search screen (`search.md`)        | `/`                   | —                              |
 | `find`                                                                     | open in-file find (`find-in-file.md`)       | `ctrl+f`              | —                              |
 | `keys`                                                                     | toggle the footer's full shortcut list      | `?`                   | —                              |
-| `send`                                                                     | send all comments to the agent              | `s` / `S`             | —                              |
+| `send`                                                                     | send authored comments, or selected PR conversation                  | `s` / `S`             | —                              |
 | `copy`                                                                     | copy all comments to the clipboard          | `y` / `Y`             | —                              |
 | `open-pr`                                                                  | open the PR in the browser (`pr-tab.md`)    | `o`                   | click the status chip          |
 | `refresh`                                                                  | refresh now                                 | `r`                   | —                              |
@@ -248,7 +248,7 @@ Row 1's primary and actions follow the cursor:
 - The comment editor, the comments list, the agent picker, the base picker, the commit picker, the search screen, and the find band show their own one-row footer, without `?`. The expansion's open state is kept and restored when they close.
 - `?` (the `keys` action) toggles the expansion in `Normal` mode only. It is text in the comment editor, the search and find inputs, and the base picker's filter, and inert in the comments list, the agent picker, and the commit picker.
 - The changed-file count and line totals live in the header. The footer carries only the comment count, inside `s send N`.
-- On `PR` row 1 carries the PR state line and `o open ↗` per `pr-tab.md`, and `?` expands to the rest.
+- On `PR`, a selected review, comment, or finding adds `s send conversation` to row 1. Description, checks, empty, and error selections keep `s` inert and omit it. The count belongs only to authored comments on file tabs.
 
 ### Comment editor
 
@@ -295,8 +295,8 @@ A plain-text field that edits at the caret, not only at the end. The search inpu
 | ----------------------- | ------------------------------------------- |
 | `j` / `k` / `↓` / `↑`   | move the highlight                          |
 | `1` – `9`               | move the highlight to that row              |
-| `enter`                 | send every comment to the highlighted agent |
-| `esc`                   | cancel, keeping every comment               |
+| `enter`                 | send the frozen payload to the highlighted agent |
+| `esc`                   | cancel, leaving authored comments and PR snapshot unchanged |
 
 Only the unmodified `enter` sends. `Alt+Enter` and `Shift+Enter` insert a newline in the comment editor, so carrying that chord into the picker sends nothing rather than handing the whole review to the armed agent.
 

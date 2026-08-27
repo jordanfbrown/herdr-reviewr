@@ -187,7 +187,7 @@ reviewr only reads. Each failure goes to a clear state. `Changes` and `All files
 
 ## Non-goals
 
-- reviewr does not write to a forge. reviewr does not post. reviewr does not resolve. reviewr does not run checks again. reviewr does not merge. reviewr does not send PR comments to the agent.
+- reviewr does not write to a forge. reviewr does not post, resolve, rerun checks, or merge. Sending a selected PR conversation only writes a locally formatted, immutable snapshot to a Herdr agent input; it never mutates the forge snapshot.
 - reviewr has no transport of its own. The CLI of the forge owns hosts, credentials, and TLS.
 - There is no repository selector. There is no search across repositories.
 - Sibling worktrees from one clone do not have different parent repositories. Use a separate clone.

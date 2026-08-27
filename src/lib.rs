@@ -1817,6 +1817,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent, area: Rect, keymap: &Keymap) -> 
     // The read-only PR tab: navigate the snapshot and open links; authoring actions are inert.
     if app.tab == crate::app::Tab::Pr {
         match (action, key.code) {
+            (Some(K::Send), _) => app.send_pr_to_agent(),
             (Some(K::Quit), _) => app.should_quit = true,
             (Some(K::Refresh), _) => {
                 app.request_pr_refresh(crate::app::RefreshKind::Forced);

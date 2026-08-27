@@ -11,7 +11,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use common::{Repo, app_on};
-use herdr_reviewr::app::{App, Focus, Mode};
+use herdr_reviewr::app::{App, Focus, FooterAction, Mode, Tab};
 use herdr_reviewr::keymap::Keymap;
 use herdr_reviewr::ui;
 use herdr_reviewr::{handle_key, handle_mouse};
@@ -238,4 +238,177 @@ fn send_dispatches_one_agent_directly_and_several_through_the_picker() {
     // A failed enumeration says so rather than claiming a count. The argv and herdr's stderr go
     // to the log, so the sentence still fits a 40-column footer (`specs/input.md`).
     assert_eq!(app.status, "herdr did not answer — copy to the clipboard instead");
+}
+
+/// PR sends are a separate process so their fake-herdr environment cannot escape to another
+/// integration-test binary.
+#[test]
+fn pr_send_freezes_the_selected_conversation_across_routing() {
+    if env::var("PR_SEND_FLOW_CHILD").is_err() {
+        let staging = tempfile::TempDir::new().expect("tempdir");
+        let script = write_fake_herdr(staging.path());
+        let out = std::process::Command::new(env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "pr_send_freezes_the_selected_conversation_across_routing",
+                "--nocapture",
+            ])
+            .env("PR_SEND_FLOW_CHILD", "1")
+            .env("FAKE_HERDR_DIR", staging.path())
+            .env("HERDR_BIN_PATH", &script)
+            .env("HERDR_WORKSPACE_ID", "w8")
+            .env("HERDR_PANE_ID", "w8:p9")
+            .output()
+            .expect("re-exec the test with the fake herdr env");
+        assert!(
+            out.status.success(),
+            "child run failed:\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            log(staging.path()).contains("pane send-text"),
+            "the child ran no PR send — did the `--exact` filter drift apart?\n{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        return;
+    }
+
+    use herdr_reviewr::forge::{CommentKind, PrSnapshot, PrView, ThreadMessage};
+
+    let r = Repo::init();
+    r.write("a.rs", "alpha\n");
+    r.commit_all("init");
+    r.write("a.rs", "alpha\nbeta\n");
+    let fake_dir = PathBuf::from(env::var("FAKE_HERDR_DIR").expect("set by the parent run"));
+    let keymap = Keymap::default();
+    let area = Rect::new(0, 0, 80, 24);
+    let mut app = app_on(&r);
+    write_comment(&mut app, "authored comment");
+
+    let finding = |body: &str| herdr_reviewr::forge::Comment {
+        kind: CommentKind::Finding,
+        author: "review-bot".into(),
+        anchor: "a.rs:2".into(),
+        body: body.into(),
+        snippet: Some("+beta".into()),
+        messages: vec![
+            ThreadMessage {
+                author: "review-bot".into(),
+                author_is_bot: true,
+                body: body.into(),
+                created_at: "2026-06-27T10:00:00Z".into(),
+            },
+            ThreadMessage {
+                author: "sam".into(),
+                author_is_bot: false,
+                body: "I will fix it".into(),
+                created_at: "2026-06-27T10:01:00Z".into(),
+            },
+        ],
+        conversation_truncated: true,
+        ..common::comment()
+    };
+    let snapshot = |comment| {
+        PrView::Pr(Box::new(PrSnapshot {
+            number: 42,
+            title: "Keep the exact conversation".into(),
+            url: "https://forge.example/pr/42".into(),
+            body: "A description makes its own inert row.".into(),
+            comments: vec![comment],
+            ..common::pr_snapshot()
+        }))
+    };
+    let original = finding("Please handle the edge case");
+    let payload = "Pull request #42: Keep the exact conversation\nURL: https://forge.example/pr/42\n\nSelected finding by @review-bot\nAnchor: a.rs:2\n\nDiff snippet:\n+beta\n\nConversation:\n\n@review-bot:\nPlease handle the edge case\n\n@sam:\nI will fix it\n\nWarning: this conversation is truncated; open the PR URL for the remaining messages.";
+    app.set_tab(Tab::Pr).unwrap();
+    app.apply_pr(snapshot(original));
+    assert!(app.pr_on_description());
+    assert!(
+        !app.footer_bands().iter().any(|&(action, _)| action == FooterAction::Send),
+        "the description never advertises a send"
+    );
+    let before_inert = app.status.clone();
+    press(&mut app, KeyCode::Char('s'), area, &keymap);
+    assert_eq!(app.status, before_inert, "send is inert on the description");
+    assert!(!log(&fake_dir).contains("pane send-text"));
+
+    app.pr_move(1);
+    assert!(app.pr_selected_comment().is_some());
+    assert!(
+        app.footer_bands().iter().any(|&(action, _)| action == FooterAction::Send),
+        "a selected conversation advertises send"
+    );
+
+    // One candidate skips the picker and must deliver a fully framed, self-contained prompt.
+    fs::write(fake_dir.join("agents.json"), ONE_AGENT).unwrap();
+    press(&mut app, KeyCode::Char('s'), area, &keymap);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.status, "added conversation from @review-bot to claude");
+    assert_eq!(app.last_sent_pane.as_deref(), Some("w8:p1"));
+    assert_eq!(app.store.len(), 1, "PR sends never consume authored comments");
+    let direct = format!("pane send-text w8:p1 \u{1b}[200~{payload}\u{1b}[201~");
+    assert!(log(&fake_dir).contains(&direct), "exact direct payload:\n{}", log(&fake_dir));
+    assert!(log(&fake_dir).contains("agent focus w8:p1"), "a successful PR send focuses its pane");
+
+    // Several candidates freeze the bytes before the picker opens. A refresh must not replace
+    // the selected conversation while the route is still undecided.
+    fs::write(fake_dir.join("agents.json"), TWO_AGENTS).unwrap();
+    press(&mut app, KeyCode::Char('s'), area, &keymap);
+    assert_eq!(app.mode, Mode::Picker);
+    app.apply_pr(snapshot(finding("REFRESHED: must not be sent")));
+    press(&mut app, KeyCode::Enter, area, &keymap);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.status, "added conversation from @review-bot to claude");
+    assert_eq!(app.store.len(), 1, "the frozen PR send preserves authored comments");
+    assert_eq!(
+        log(&fake_dir).matches(&direct).count(),
+        2,
+        "the picker sends frozen original bytes: {}",
+        log(&fake_dir)
+    );
+    // Picker tabs are modal/inert, so they cannot replace the frozen source before selection.
+    app.send_pr_to_agent();
+    assert_eq!(app.mode, Mode::Picker);
+    press(&mut app, KeyCode::Char('1'), area, &keymap);
+    assert_eq!(app.tab, Tab::Pr, "a tab binding is inert while the picker is open");
+    press(&mut app, KeyCode::Esc, area, &keymap);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(!log(&fake_dir).contains("REFRESHED: must not be sent"));
+
+    // Escape discards the frozen payload without dispatching it.
+    app.set_tab(Tab::Pr).unwrap();
+    app.pr_move(1);
+    app.send_pr_to_agent();
+    assert_eq!(app.mode, Mode::Picker);
+    let sends_before_cancel = log(&fake_dir).matches("pane send-text").count();
+    press(&mut app, KeyCode::Esc, area, &keymap);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(
+        log(&fake_dir).matches("pane send-text").count(),
+        sends_before_cancel,
+        "cancel sends nothing"
+    );
+    assert_eq!(app.store.len(), 1);
+
+    // A chosen pane disappearing fails only this send and keeps both independent stores intact.
+    app.send_pr_to_agent();
+    assert_eq!(app.mode, Mode::Picker);
+    fail_on(&fake_dir, "pane send-text w8:p1");
+    press(&mut app, KeyCode::Enter, area, &keymap);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.status, "agent not found");
+    assert_eq!(app.store.len(), 1, "failed PR send preserves authored comments");
+    assert_eq!(
+        app.pr_selected_comment().map(|comment| comment.body.as_str()),
+        Some("REFRESHED: must not be sent"),
+        "failed PR send preserves the forge snapshot"
+    );
+    fail_on_nothing(&fake_dir);
+
+    fs::write(fake_dir.join("agents.json"), r#"{"result":{"agents":[]}}"#).unwrap();
+    app.send_pr_to_agent();
+    assert_eq!(app.mode, Mode::Normal, "no agents open no picker");
+    assert_eq!(app.status, "no agent here — copy to the clipboard instead");
+    assert_eq!(app.store.len(), 1, "no-agent PR send preserves authored comments");
 }

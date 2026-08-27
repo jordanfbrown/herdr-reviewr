@@ -95,11 +95,11 @@ A manual open prefers the focused pane's live foreground directory over its reco
 
 ## Sending to the agent
 
-`Send` hands every written comment to one agent at once. The send asks rather than resolves.
+`Send` hands one frozen payload to one agent at once. On file tabs the payload is every written comment; it is consumed only after a successful send. On the `PR` tab it is the selected forge conversation and is never consumed from the authored comment store.
 
 | herdr reports          | `Send` does                                                             |
 | ---------------------- | ----------------------------------------------------------------------- |
-| one agent              | writes every comment into its input without submitting, then focuses it |
+| one agent              | writes the frozen payload into its input without submitting, then focuses it |
 | several agents         | opens the agent picker                                                  |
 | no agent, or no answer | refuses and names the clipboard copy                                    |
 
@@ -135,9 +135,9 @@ The highlight opens on the agent this session last sent to, else on the first ro
 - Only the first nine rows carry a number.
 - The row set and its order freeze when the picker opens (`overview.md`).
 
-The send addresses the pane on the chosen row. A pane that closed while the picker was open fails the send, and every comment stays. A successful send focuses the chosen agent and names it.
+The send addresses the pane on the chosen row. A pane that closed while the picker was open fails the send. A successful file-tab send consumes its authored comments; a PR send changes neither its forge snapshot nor the authored store. In both cases a successful send focuses the chosen agent and names it. Cancellation drops the frozen payload without changing either source.
 
-A configuration error closes the picker and drops its frozen rows. Every comment survives, and so does the last-sent agent that arms the next picker (`config.md`).
+A configuration error closes the picker and drops its frozen rows and payload. Authored comments and forge snapshots survive, and so does the last-sent agent that arms the next picker (`config.md`).
 
 ## Turn tracking
 

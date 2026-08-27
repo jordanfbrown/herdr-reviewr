@@ -118,10 +118,14 @@ This table shows how each snippet line shows:
 - The `o` key or the chip opens the PR in the browser.
 - If a body is higher than the read pane, a scrollbar shows on the right border of the pane. If the body fits, there is no scrollbar.
 - A retry notice for a snapshot that the tab kept stays above the read body. The notice stays in view. The scroll of the reader does not move the notice.
-- The keys `s`, `c`, `v`, `d`, and `e` do not operate on this tab.
+- `s` sends the selected review, comment, or finding conversation to an agent. It is inert on the description, checks, empty state, and errors. The send never writes to the forge, changes the snapshot, resolves a finding, or changes authored comments.
 - A merged PR or a closed PR shows the same copy. The tab only reads.
 - If there is no forge CLI that can operate, the tab shows the failure from `forge-host.md`. The failure names the command that lets you continue.
 
+
+### Send payload
+
+`s` formats one immutable, self-contained payload before choosing an agent: `Pull request #N: title`, `URL: url`, selected kind and root author, and then every fetched message in chronological order as `@author:` plus body. A finding additionally carries its anchor and stored diff snippet. A truncated conversation ends with a warning to open the PR URL. Refreshes and tab changes while the picker is open do not alter these bytes.
 ### Refresh
 
 The tab gets a new snapshot when one of these occurs:
