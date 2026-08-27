@@ -407,37 +407,41 @@ pub fn split_side_at(app: &App, inner: Rect, col: u16) -> Option<crate::model::S
     }
 }
 
-fn split_slot_rows(app: &App, inner: Rect) -> Vec<Slot> {
+fn split_row_slots(app: &App, inner: Rect) -> Vec<Vec<Slot>> {
     let g = split_geometry(inner);
     let cards = app.card_rows();
     let editing = editing_comment(app);
     let p = app.palette();
-    let mut out = Vec::new();
-    for AlignedRow { old, new, old_index, new_index } in &app.visible_aligned {
-        let oh =
-            old.as_ref().map_or(1, |r| row_height(r, g.gutter, g.left.width as usize, app.wrap));
-        let nh =
-            new.as_ref().map_or(1, |r| row_height(r, g.gutter, g.right.width as usize, app.wrap));
-        for seg in 0..oh.max(nh) {
-            out.push(Slot::SplitCode {
-                old: old_index.filter(|_| seg < oh).map(|i| (i, seg)),
-                new: new_index.filter(|_| seg < nh).map(|i| (i, seg)),
-            });
-        }
-        for &(_, ci) in
-            cards.iter().filter(|&&(row, _)| *old_index == Some(row) || *new_index == Some(row))
-        {
-            if Some(ci) != editing
-                && let Some(comment) = app.store.get(ci)
+    app.visible_aligned
+        .iter()
+        .map(|AlignedRow { old, new, old_index, new_index }| {
+            let oh = old
+                .as_ref()
+                .map_or(1, |r| row_height(r, g.gutter, g.left.width as usize, app.wrap));
+            let nh = new
+                .as_ref()
+                .map_or(1, |r| row_height(r, g.gutter, g.right.width as usize, app.wrap));
+            let mut slots: Vec<Slot> = (0..oh.max(nh))
+                .map(|seg| Slot::SplitCode {
+                    old: old_index.filter(|_| seg < oh).map(|i| (i, seg)),
+                    new: new_index.filter(|_| seg < nh).map(|i| (i, seg)),
+                })
+                .collect();
+            for &(_, ci) in
+                cards.iter().filter(|&&(row, _)| *old_index == Some(row) || *new_index == Some(row))
             {
-                out.extend(
-                    (0..comment_card_lines(comment, inner.width as usize, p).len())
-                        .map(|line| Slot::Card { comment: ci, line }),
-                );
+                if Some(ci) != editing
+                    && let Some(comment) = app.store.get(ci)
+                {
+                    slots.extend(
+                        (0..comment_card_lines(comment, inner.width as usize, p).len())
+                            .map(|line| Slot::Card { comment: ci, line }),
+                    );
+                }
             }
-        }
-    }
-    out
+            slots
+        })
+        .collect()
 }
 
 /// The read pane's display lines top to bottom for the current state — the one layout walk.
@@ -455,12 +459,38 @@ fn read_layout(app: &App, inner: Rect) -> Vec<Slot> {
     let editing = editing_comment(app);
     let rows = app.visible.len();
     if split_active(app, width) {
-        let body_h = if app.mode == Mode::Find { height.saturating_sub(1) } else { height };
-        return split_slot_rows(app, inner)
-            .into_iter()
-            .skip(app.diff_scroll)
-            .take(body_h)
-            .collect();
+        let groups = split_row_slots(app, inner);
+        let source_rows = |slots: &[Slot]| -> Vec<usize> {
+            slots
+                .iter()
+                .flat_map(|slot| match slot {
+                    Slot::SplitCode { old, new } => {
+                        [old.map(|(row, _)| row), new.map(|(row, _)| row)]
+                    }
+                    Slot::Card { .. } | Slot::Code { .. } | Slot::Composer => [None, None],
+                })
+                .flatten()
+                .collect()
+        };
+        let start = groups
+            .iter()
+            .position(|slots| source_rows(slots).contains(&app.diff_scroll))
+            .unwrap_or(groups.len());
+        if !app.composing() {
+            let body_h = if app.mode == Mode::Find { height.saturating_sub(1) } else { height };
+            return groups.into_iter().skip(start).flatten().take(body_h).collect();
+        }
+
+        let (anchor, box_h, diff_budget) = composing_split(app, height, width);
+        let anchor_group =
+            groups.iter().position(|slots| source_rows(slots).contains(&anchor)).unwrap_or(start);
+        let above =
+            tail(groups[start..=anchor_group].iter().flatten().copied().collect(), diff_budget);
+        let remaining = diff_budget - above.len();
+        let mut out = above;
+        out.extend(std::iter::repeat_n(Slot::Composer, box_h));
+        out.extend(groups[anchor_group + 1..].iter().flatten().copied().take(remaining));
+        return out;
     }
     // A row's slots: its wrapped code lines, then its visible cards' lines — the same order
     // `render_diff_view`'s `row_lines` paints them.
@@ -2069,37 +2099,53 @@ fn render_split_diff(frame: &mut Frame, app: &App, inner: Rect) {
     let slots = read_layout(app, inner);
     app.note_painted_slots(slots.clone());
     let p = app.palette();
-    let lines: Vec<Line> = slots
-        .into_iter()
-        .map(|slot| match slot {
-            Slot::SplitCode { old, new } => {
-                if old.or(new).is_some_and(|(i, _)| matches!(app.visible[i], Row::Fold { .. })) {
-                    Line::from(format!(
-                        "{:<width$}",
-                        format!(
-                            "⋯ {} unmodified lines",
-                            app.visible[old.or(new).unwrap().0].hidden()
-                        ),
-                        width = inner.width as usize
-                    ))
-                } else {
-                    let mut spans = split_cell(old, app, g.left, g.gutter, true);
-                    spans.push(Span::raw("│"));
-                    spans.extend(split_cell(new, app, g.right, g.gutter, false));
-                    Line::from(spans)
-                }
+    let line_for = |slot: &Slot| match *slot {
+        Slot::SplitCode { old, new } => {
+            if old.or(new).is_some_and(|(i, _)| matches!(app.visible[i], Row::Fold { .. })) {
+                Line::from(format!(
+                    "{:<width$}",
+                    format!(
+                        "⋯ {} unmodified lines",
+                        app.visible[old.or(new).expect("fold slot has a source").0].hidden()
+                    ),
+                    width = inner.width as usize
+                ))
+            } else {
+                let mut spans = split_cell(old, app, g.left, g.gutter, true);
+                spans.push(Span::raw("│"));
+                spans.extend(split_cell(new, app, g.right, g.gutter, false));
+                Line::from(spans)
             }
-            Slot::Card { comment, line } => app
-                .store
-                .get(comment)
-                .and_then(|card| {
-                    comment_card_lines(card, inner.width as usize, p).get(line).cloned()
-                })
-                .unwrap_or_default(),
-            Slot::Code { .. } | Slot::Composer => Line::default(),
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(lines), inner);
+        }
+        Slot::Card { comment, line } => app
+            .store
+            .get(comment)
+            .and_then(|card| comment_card_lines(card, inner.width as usize, p).get(line).cloned())
+            .unwrap_or_default(),
+        Slot::Code { .. } | Slot::Composer => Line::default(),
+    };
+
+    if let Some(from) = slots.iter().position(|slot| matches!(slot, Slot::Composer)) {
+        let box_h = slots[from..].iter().take_while(|slot| matches!(slot, Slot::Composer)).count();
+        let above: Vec<Line> = slots[..from].iter().map(&line_for).collect();
+        let below: Vec<Line> = slots[from + box_h..].iter().map(&line_for).collect();
+        let bands = Layout::vertical([
+            Constraint::Length(above.len() as u16),
+            Constraint::Length(box_h as u16),
+            Constraint::Length(below.len() as u16),
+        ])
+        .split(inner);
+        if !above.is_empty() {
+            frame.render_widget(Paragraph::new(above), bands[0]);
+        }
+        render_composer(frame, app, bands[1]);
+        if !below.is_empty() {
+            frame.render_widget(Paragraph::new(below), bands[2]);
+        }
+        return;
+    }
+
+    frame.render_widget(Paragraph::new(slots.iter().map(line_for).collect::<Vec<_>>()), inner);
 }
 
 fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {

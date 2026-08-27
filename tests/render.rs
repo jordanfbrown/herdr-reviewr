@@ -16,6 +16,7 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
+use std::fmt::Write as _;
 
 fn dump(buffer: &Buffer) -> String {
     let area = buffer.area;
@@ -321,6 +322,57 @@ fn side_by_side_aligns_changes_wraps_and_restores_after_narrow_fallback() {
     );
     let restored = dump(&render_size(&app, 140, 20));
     assert!(restored.contains('│'), "a wider pane restores the requested split layout: {restored}");
+}
+
+#[test]
+fn side_by_side_scroll_uses_logical_rows() {
+    let r = Repo::init();
+    let old = (0..30).fold(String::new(), |mut text, i| {
+        writeln!(text, "old_{i:02}").expect("writing to a String cannot fail");
+        text
+    });
+    let new = (0..30).fold(String::new(), |mut text, i| {
+        writeln!(text, "new_{i:02}").expect("writing to a String cannot fail");
+        text
+    });
+    r.write("scroll.rs", &old);
+    r.commit_all("init");
+    r.write("scroll.rs", &new);
+    let mut app = app_on(&r);
+    app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;
+    app.focus = Focus::Diff;
+
+    let before = dump(&render_size(&app, 140, 10));
+    app.wheel_diff(12);
+    let heights = ui::diff_row_heights(&app, Rect::new(0, 0, 140, 10));
+    app.bound_diff_scroll(&heights, ui::diff_viewport_height(Rect::new(0, 0, 140, 10), &app));
+    let after = dump(&render_size(&app, 140, 10));
+
+    assert!(before.contains("old_00") && before.contains("new_00"));
+    assert!(!after.contains("old_00") && !after.contains("new_00"));
+    assert!(
+        after.contains("old_12") && after.contains("new_12"),
+        "scroll keeps paired rows aligned: {after}"
+    );
+}
+
+#[test]
+fn side_by_side_renders_the_comment_composer() {
+    let mut app = edited_app();
+    app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;
+    composing(&mut app);
+
+    let empty = dump(&render_size(&app, 140, 20));
+    assert!(empty.contains("Leave a comment…"), "split mode paints the inline composer: {empty}");
+
+    app.input_push('x');
+    let buf = render_size(&app, 140, 20);
+    assert!(
+        (0..buf.area.height)
+            .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+            .any(|(x, y)| buf.cell((x, y)).is_some_and(|cell| cell.symbol() == "x")),
+        "typed comment text paints in the split composer"
+    );
 }
 
 #[test]
