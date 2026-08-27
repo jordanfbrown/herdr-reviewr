@@ -16,6 +16,7 @@ A valid file may set any subset of the supported keys. A missing file and an omi
 theme = "tokyo-night"
 default_scope = "branch"
 navigator_position = "bottom"
+diff_layout = "side-by-side"
 toggle_placement = "overlay"
 toggle_direction = "down"
 auto_open = false
@@ -36,6 +37,7 @@ collapse = ["h", "left"]
 | `theme`              | one name from the theme set in `theme.md`                                          |
 | `default_scope`      | `uncommitted`, `branch`, or `last-turn`                                            |
 | `navigator_position` | `right`, `left`, `top`, or `bottom`                                                |
+| `diff_layout`          | `unified` or `side-by-side`; the Changes diff presentation                                    |
 | `toggle_placement`   | `split`, `overlay`, `zoomed`, or `tab`                                             |
 | `toggle_direction`   | `right` or `down`                                                                  |
 | `auto_open`          | boolean                                                                            |

@@ -194,6 +194,7 @@ pub enum CheckStatus {
 
 /// One incoming review, prose comment, or inline thread.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Comment {
     /// Provider-issued identity that survives content refreshes.
     pub id: String,
@@ -1081,37 +1082,61 @@ fn merge_comments(reviews: &Value, issues: &Value, threads: &Value) -> Vec<Comme
     let mut out: Vec<Comment> = Vec::new();
 
     // Submitted reviews with a non-empty body (the PR-level `review` cards).
-    for r in reviews.as_array().into_iter().flatten() {
+    for (index, r) in reviews.as_array().into_iter().flatten().enumerate() {
         let body = r["body"].as_str().unwrap_or("").trim().to_string();
         if body.is_empty() {
             continue;
         }
+        let id = r["id"].as_str().filter(|id| !id.is_empty()).map_or_else(
+            || {
+                fallback_comment_id(
+                    CommentKind::Review,
+                    r["author"]["login"].as_str().unwrap_or(""),
+                    &body,
+                    r["submittedAt"].as_str().unwrap_or(""),
+                    index,
+                )
+            },
+            str::to_string,
+        );
         out.push(prose_comment(
             CommentKind::Review,
             &r["author"],
             body,
             r["submittedAt"].as_str(),
-            r["id"].as_str().unwrap_or_default(),
+            &id,
         ));
     }
 
     // Plain conversation comments (the `comment` cards).
-    for c in issues.as_array().into_iter().flatten() {
+    for (index, c) in issues.as_array().into_iter().flatten().enumerate() {
         let body = c["body"].as_str().unwrap_or("").trim().to_string();
         if body.is_empty() {
             continue;
         }
+        let id = c["id"].as_str().filter(|id| !id.is_empty()).map_or_else(
+            || {
+                fallback_comment_id(
+                    CommentKind::Comment,
+                    c["author"]["login"].as_str().unwrap_or(""),
+                    &body,
+                    c["createdAt"].as_str().unwrap_or(""),
+                    index,
+                )
+            },
+            str::to_string,
+        );
         out.push(prose_comment(
             CommentKind::Comment,
             &c["author"],
             body,
             c["createdAt"].as_str(),
-            c["id"].as_str().unwrap_or_default(),
+            &id,
         ));
     }
 
     // Inline review threads retain every fetched renderable reply.
-    for t in threads.as_array().into_iter().flatten() {
+    for (index, t) in threads.as_array().into_iter().flatten().enumerate() {
         let messages: Vec<ThreadMessage> = t["comments"]["nodes"]
             .as_array()
             .into_iter()
@@ -1142,8 +1167,20 @@ fn merge_comments(reviews: &Value, issues: &Value, threads: &Value) -> Vec<Comme
             end,
             finding_side(diff_side == Some("RIGHT"), diff_side == Some("LEFT")),
         );
+        let id = t["id"].as_str().filter(|id| !id.is_empty()).map_or_else(
+            || {
+                fallback_comment_id(
+                    CommentKind::Finding,
+                    &root.author,
+                    &root.body,
+                    &root.created_at,
+                    index,
+                )
+            },
+            str::to_string,
+        );
         out.push(Comment {
-            id: t["id"].as_str().unwrap_or_default().to_string(),
+            id,
             kind: CommentKind::Finding,
             author: root.author.clone(),
             author_is_bot: root.author_is_bot,
@@ -1177,7 +1214,7 @@ fn prose_comment(
 ) -> Comment {
     let login = user["login"].as_str().unwrap_or("").to_string();
     let bot = is_bot(&login);
-    prose_row(kind, login, bot, body, created_at.unwrap_or("").to_string(), id.to_string())
+    prose_row(kind, login, bot, body, created_at.unwrap_or("").to_string(), id)
 }
 
 pub(crate) fn finding_anchor(path: &str, start: Option<u64>, end: Option<u64>) -> String {
@@ -1223,6 +1260,29 @@ fn thread_range(
     (original_start.or(original_line), original_line.or(original_start))
 }
 
+fn fallback_comment_id(
+    kind: CommentKind,
+    author: &str,
+    body: &str,
+    created_at: &str,
+    index: usize,
+) -> String {
+    format!("{kind:?}\u{1f}{author}\u{1f}{created_at}\u{1f}{body}\u{1f}{index}")
+}
+
+fn stable_comment_id(
+    kind: CommentKind,
+    author: &str,
+    body: &str,
+    created_at: &str,
+    id: &str,
+) -> String {
+    if !id.is_empty() {
+        return id.to_string();
+    }
+    format!("{kind:?}\u{1f}{author}\u{1f}{created_at}\u{1f}{body}")
+}
+
 /// One PR-level prose row with its root as the full one-message conversation.
 pub(crate) fn prose_row(
     kind: CommentKind,
@@ -1230,7 +1290,7 @@ pub(crate) fn prose_row(
     author_is_bot: bool,
     body: String,
     created_at: String,
-    id: String,
+    id: &str,
 ) -> Comment {
     let anchor = if kind == CommentKind::Review { "review" } else { "comment" };
     let messages = vec![ThreadMessage {
@@ -1240,7 +1300,7 @@ pub(crate) fn prose_row(
         created_at: created_at.clone(),
     }];
     Comment {
-        id,
+        id: stable_comment_id(kind, &author, &body, &created_at, id),
         kind,
         author,
         author_is_bot,

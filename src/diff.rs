@@ -35,6 +35,24 @@ pub enum Row {
 /// A `[start, end)` run of char indices within a line, for word-level emphasis.
 pub type CharRange = (u32, u32);
 
+/// One old/new cell in an aligned diff row. A missing cell is the blank counterpart of an insertion or deletion.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct AlignedRow {
+    pub old: Option<Row>,
+    pub new: Option<Row>,
+    /// Index in the source rows passed to [`align_rows`], retained so a projection can map
+    /// a logical split row back only at its source-boundary operations.
+    pub old_index: Option<usize>,
+    pub new_index: Option<usize>,
+}
+
+impl AlignedRow {
+    pub fn is_change(&self) -> bool {
+        self.old.as_ref().is_some_and(|row| row.marker() == '-')
+            || self.new.as_ref().is_some_and(|row| row.marker() == '+')
+    }
+}
+
 impl Row {
     pub fn old_no(&self) -> Option<u32> {
         match self {
@@ -136,6 +154,8 @@ pub struct FileDiff {
     pub state: FileState,
     pub view: View,
     pub rows: Vec<Row>,
+    /// Stable old/new alignment, derived during construction and reused by split rendering.
+    pub aligned_rows: Vec<AlignedRow>,
 }
 
 /// A file beyond either budget renders as `too_large` rather than stalling the diff —
@@ -166,6 +186,7 @@ impl FileDiff {
             state: FileState::Normal,
             view: View::Diff,
             rows: Vec::new(),
+            aligned_rows: Vec::new(),
         }
     }
 
@@ -185,6 +206,7 @@ impl FileDiff {
             state,
             view: View::Diff,
             rows: Vec::new(),
+            aligned_rows: Vec::new(),
         };
         if old.contains('\0') || new.contains('\0') {
             return notice(FileState::Binary);
@@ -230,13 +252,9 @@ impl FileDiff {
             }
         }
         compute_emphasis(&mut rows);
-        Self {
-            path,
-            previous_path,
-            state: FileState::Normal,
-            view: View::Diff,
-            rows: collapse_context(&rows),
-        }
+        let rows = collapse_context(&rows);
+        let aligned_rows = align_rows(&rows);
+        Self { path, previous_path, state: FileState::Normal, view: View::Diff, rows, aligned_rows }
     }
 
     /// Build the File view: the whole current `content` as `Context` rows, syntax-highlighted,
@@ -249,6 +267,7 @@ impl FileDiff {
             state,
             view: View::File,
             rows: Vec::new(),
+            aligned_rows: Vec::new(),
         };
         if content.contains('\0') {
             return notice(FileState::Binary);
@@ -257,7 +276,7 @@ impl FileDiff {
             return notice(FileState::TooLarge);
         }
         let spans = hl.highlight(content, language_of(&path).as_deref());
-        let rows = content
+        let rows: Vec<Row> = content
             .lines()
             .enumerate()
             .map(|(i, _)| {
@@ -269,7 +288,15 @@ impl FileDiff {
                 }
             })
             .collect();
-        Self { path, previous_path: None, state: FileState::Normal, view: View::File, rows }
+        let aligned_rows = align_rows(&rows);
+        Self {
+            path,
+            previous_path: None,
+            state: FileState::Normal,
+            view: View::File,
+            rows,
+            aligned_rows,
+        }
     }
 
     /// The File-view `too_large` notice, for an over-budget file the caller declines to read.
@@ -281,6 +308,7 @@ impl FileDiff {
             state: FileState::TooLarge,
             view: View::File,
             rows: Vec::new(),
+            aligned_rows: Vec::new(),
         }
     }
 }
@@ -439,6 +467,45 @@ fn push_range(ranges: &mut Vec<CharRange>, pos: u32, len: u32) {
     }
 }
 
+/// Align adjacent deletion/insertion runs once during model construction. Unequal runs retain
+/// blank cells after their matched prefix; non-change rows occupy both cells.
+pub(crate) fn align_rows(rows: &[Row]) -> Vec<AlignedRow> {
+    let mut out = Vec::with_capacity(rows.len());
+    let mut i = 0;
+    while i < rows.len() {
+        if matches!(rows[i], Row::Deletion { .. }) {
+            let start = i;
+            while i < rows.len() && matches!(rows[i], Row::Deletion { .. }) {
+                i += 1;
+            }
+            let middle = i;
+            while i < rows.len() && matches!(rows[i], Row::Insertion { .. }) {
+                i += 1;
+            }
+            for n in 0..(middle - start).max(i - middle) {
+                let old_index = (n < middle - start).then_some(start + n);
+                let new_index = (n < i - middle).then_some(middle + n);
+                out.push(AlignedRow {
+                    old: old_index.map(|index| rows[index].clone()),
+                    new: new_index.map(|index| rows[index].clone()),
+                    old_index,
+                    new_index,
+                });
+            }
+        } else {
+            let old_index = (!matches!(rows[i], Row::Insertion { .. })).then_some(i);
+            let new_index = (!matches!(rows[i], Row::Deletion { .. })).then_some(i);
+            out.push(AlignedRow {
+                old: old_index.map(|index| rows[index].clone()),
+                new: new_index.map(|index| rows[index].clone()),
+                old_index,
+                new_index,
+            });
+            i += 1;
+        }
+    }
+    out
+}
 /// Context lines kept adjacent to each change; longer unchanged runs collapse to a fold.
 const FOLD_MARGIN: usize = 3;
 
@@ -758,6 +825,17 @@ mod tests {
             .find(|r| matches!(r, Row::Insertion { .. }) && r.text() == "beta")
             .unwrap();
         assert!(extra.emphasis().is_empty(), "the unpaired insertion is not emphasized");
+    }
+
+    #[test]
+    fn aligns_replacements_and_uneven_change_blocks_once() {
+        let d = build("old one\nold two\n", "new one\nnew two\nnew three\n");
+        assert_eq!(d.aligned_rows.len(), 3);
+        assert_eq!(d.aligned_rows[0].old.as_ref().unwrap().text(), "old one");
+        assert_eq!(d.aligned_rows[0].new.as_ref().unwrap().text(), "new one");
+        assert_eq!(d.aligned_rows[2].old, None);
+        assert_eq!(d.aligned_rows[2].new.as_ref().unwrap().text(), "new three");
+        assert!(d.aligned_rows.iter().all(super::AlignedRow::is_change));
     }
 
     #[test]

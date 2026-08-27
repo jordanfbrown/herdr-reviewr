@@ -4109,7 +4109,8 @@ fn the_description_row_pins_first_and_follows_refetches() {
     use herdr_reviewr::app::Tab;
     use herdr_reviewr::forge::{Comment, PrSnapshot, PrView};
 
-    let comment = |author: &str, created: &str| Comment {
+    let comment = |id: &str, author: &str, created: &str| Comment {
+        id: id.into(),
         author: author.into(),
         created_at: created.into(),
         ..common::comment()
@@ -4125,7 +4126,7 @@ fn the_description_row_pins_first_and_follows_refetches() {
     app.set_tab(Tab::Pr).unwrap();
 
     // A non-empty description pins one extra row first.
-    app.apply_pr(snap("the body", vec![comment("ann", "2026-06-27T10:00:00Z")]));
+    app.apply_pr(snap("the body", vec![comment("ann-id", "ann", "2026-06-27T10:00:00Z")]));
     assert_eq!(app.pr_row_count(), 2, "description + one comment");
     assert!(app.pr_on_description(), "the cursor starts on the pinned description");
     assert!(app.pr_selected_comment().is_none(), "the description is not a comment");
@@ -4135,7 +4136,10 @@ fn the_description_row_pins_first_and_follows_refetches() {
     // A refetch keeps the selected comment across the pinned row's offset.
     app.apply_pr(snap(
         "the body",
-        vec![comment("bob", "2026-06-27T11:00:00Z"), comment("ann", "2026-06-27T10:00:00Z")],
+        vec![
+            comment("bob-id", "bob", "2026-06-27T11:00:00Z"),
+            comment("ann-id", "ann", "2026-06-27T10:00:00Z"),
+        ],
     ));
     assert_eq!(
         app.pr_selected_comment().map(|c| c.author.as_str()),
@@ -4146,17 +4150,17 @@ fn the_description_row_pins_first_and_follows_refetches() {
     // On the description, a refetch that keeps a description holds the selection.
     app.pr_move(-5);
     assert!(app.pr_on_description());
-    app.apply_pr(snap("edited body", vec![comment("ann", "2026-06-27T10:00:00Z")]));
+    app.apply_pr(snap("edited body", vec![comment("ann-id", "ann", "2026-06-27T10:00:00Z")]));
     assert!(app.pr_on_description(), "the description row keeps its identity");
 
     // An emptied description vanishes like a comment: the row is gone, the cursor clamps.
-    app.apply_pr(snap("", vec![comment("ann", "2026-06-27T10:00:00Z")]));
+    app.apply_pr(snap("", vec![comment("ann-id", "ann", "2026-06-27T10:00:00Z")]));
     assert_eq!(app.pr_row_count(), 1, "no description row without a body");
     assert!(!app.pr_on_description());
     assert_eq!(app.pr_selected_comment().map(|c| c.author.as_str()), Some("ann"));
 
     // A whitespace-only body is no description either.
-    app.apply_pr(snap("  \n ", vec![comment("ann", "2026-06-27T10:00:00Z")]));
+    app.apply_pr(snap("  \n ", vec![comment("ann-id", "ann", "2026-06-27T10:00:00Z")]));
     assert_eq!(app.pr_row_count(), 1);
 }
 
@@ -6041,6 +6045,113 @@ fn sel_cell(app: &App, row: usize, display_col: u16) -> (u16, u16) {
     (inner.x + 5 + display_col, inner.y + u16::try_from(row).unwrap())
 }
 
+/// A one-line replacement whose sides are distinct enough to prove a drag never crosses
+/// from its origin into the other split pane.
+fn split_selection_app() -> App {
+    let r = Repo::init();
+    r.write("replace.rs", "shared\nOLD_SIDE\n");
+    r.commit_all("init");
+    r.write("replace.rs", "shared\nNEW_SIDE\n");
+    let mut app = app_on(&r);
+    app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;
+    app.navigator_hidden = true;
+    app
+}
+
+fn split_cells(app: &App) -> ((u16, u16), (u16, u16)) {
+    let backend = ratatui::backend::TestBackend::new(SEL_AREA.width, SEL_AREA.height);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal.draw(|f| herdr_reviewr::ui::render(f, app)).unwrap();
+    let inner = herdr_reviewr::ui::read_inner_rect(SEL_AREA, app);
+    let point = |side, token: &str| {
+        (inner.y..inner.y + inner.height)
+            .flat_map(|y| (inner.x..inner.x + inner.width).map(move |x| (x, y)))
+            .find(|&(x, y)| {
+                herdr_reviewr::ui::read_point_at(SEL_AREA, app, x, y).is_some_and(|p| {
+                    p.side == Some(side) && app.visible[p.row].text().contains(token)
+                })
+            })
+            .unwrap()
+    };
+    (point(Side::Old, "OLD_SIDE"), point(Side::New, "NEW_SIDE"))
+}
+
+#[test]
+fn split_mouse_and_keyboard_keep_the_originating_side_and_copy_only_source_text() {
+    let mut app = split_selection_app();
+    let (left, right) = split_cells(&app);
+
+    // Paint before every event through `sel_mouse`; the hit targets are the actual split cells.
+    sel_mouse(&mut app, MouseEventKind::Down(MouseButton::Left), left.0, left.1);
+    assert_eq!(app.active_side, Side::Old, "left painted code hit selects the old side");
+    sel_mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), right.0, right.1);
+    let drag = app.text_drag().expect("the split drag stays active");
+    assert_eq!(drag.anchor.side, Some(Side::Old));
+    assert_eq!(drag.extent.side, Some(Side::Old), "cross-pane pointer clamps to the origin side");
+    sel_mouse(&mut app, MouseEventKind::Up(MouseButton::Left), right.0, right.1);
+    assert_eq!(
+        last_copy().as_deref(),
+        Some("OLD_SIDE"),
+        "clipboard excludes gutters, divider, blanks, and new text"
+    );
+
+    // A keyboard move after a right-side hit retains the side used for comment anchoring.
+    let right_row = herdr_reviewr::ui::read_point_at(SEL_AREA, &app, right.0, right.1).unwrap().row;
+    let right_logical =
+        app.visible_aligned.iter().position(|row| row.new_index == Some(right_row)).unwrap();
+    app.diff_cursor = right_logical;
+    sel_mouse(&mut app, MouseEventKind::Down(MouseButton::Left), right.0, right.1);
+    sel_mouse(&mut app, MouseEventKind::Up(MouseButton::Left), right.0, right.1);
+    assert_eq!(app.active_side, Side::New, "right painted code hit selects the new side");
+    app.move_cursor(-1).unwrap();
+    assert_eq!(app.active_side, Side::New, "keyboard cursor motion never silently flips side");
+    app.diff_cursor = right_logical;
+    app.select_anchor = None;
+    app.start_comment();
+    app.input_push('n');
+    app.submit_comment();
+    let comment = app.store.iter().last().unwrap();
+    assert_eq!(
+        (comment.side, comment.start, comment.end),
+        (Side::New, 2, 2),
+        "a right-side hit anchors the saved comment to the replacement's new line"
+    );
+}
+
+#[test]
+fn refresh_and_file_tab_stash_preserve_split_preference_and_active_side() {
+    let r = Repo::init();
+    r.write("a.rs", "old\n");
+    r.commit_all("init");
+    r.write("a.rs", "new\n");
+    let mut app = app_on(&r);
+    app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;
+    app.active_side = Side::Old;
+    app.reload().unwrap();
+    assert_eq!(app.diff_layout, herdr_reviewr::config::DiffLayout::SideBySide);
+    assert_eq!(app.active_side, Side::Old, "refresh leaves the comment side intact");
+
+    enter_tab(&mut app, herdr_reviewr::app::Tab::AllFiles);
+    assert_eq!(app.diff_layout, herdr_reviewr::config::DiffLayout::SideBySide);
+    assert_eq!(app.active_side, Side::Old);
+    enter_tab(&mut app, herdr_reviewr::app::Tab::Changes);
+    assert_eq!(
+        app.diff_layout,
+        herdr_reviewr::config::DiffLayout::SideBySide,
+        "Changes restores the preferred split layout"
+    );
+    assert_eq!(app.active_side, Side::Old, "Changes restores the active comment side");
+
+    // Non-Changes surfaces cannot toggle into a split presentation.
+    enter_tab(&mut app, herdr_reviewr::app::Tab::AllFiles);
+    app.toggle_diff_layout();
+    assert_eq!(
+        app.diff_layout,
+        herdr_reviewr::config::DiffLayout::SideBySide,
+        "Files remains unified and its layout action is inert"
+    );
+}
+
 #[test]
 fn a_text_drag_maps_tabs_and_wide_chars_and_extracts_source_text() {
     let r = selection_repo();
@@ -6634,8 +6745,8 @@ fn a_pr_navigator_row_copies_its_full_text_even_when_the_pane_truncates_it() {
     app.gesture = Gesture::Text {
         drag: TextDrag {
             surface: Surface::PrNav,
-            anchor: Point { row: 0, chr: 0 },
-            extent: Point { row: 99, chr: 0 },
+            anchor: Point { row: 0, chr: 0, side: None },
+            extent: Point { row: 99, chr: 0, side: None },
         },
         count: 1,
     };

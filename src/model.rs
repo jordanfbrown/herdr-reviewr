@@ -110,7 +110,7 @@ pub struct ChangedFile {
 }
 
 /// Which side of the diff a comment's lines live on.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Side {
     New,
     Old,

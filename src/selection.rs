@@ -6,6 +6,7 @@
 
 use crate::diff::Row;
 use crate::file_list::{self, RowKind};
+use crate::model::Side;
 
 /// Where a text drag lives, locked at mouse-down (`TS-ONE-SURFACE`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,11 +26,13 @@ pub enum Surface {
 }
 
 /// One endpoint: a logical row in its surface plus a character offset into that row's text.
-/// Row-granular surfaces keep `chr` at 0.
+/// In a split diff, `side` locks a gesture to one painted source column. Row-granular
+/// surfaces keep `chr` at 0 and `side` at `None`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Point {
     pub row: usize,
     pub chr: usize,
+    pub side: Option<Side>,
 }
 
 /// An active text drag: born at mouse-down, ended by the table in
@@ -75,14 +78,32 @@ impl TextDrag {
 }
 
 /// The clipboard text for a `Read`-surface selection over `rows`: each spanned content row
-/// contributes its source line once (a wrapped line is one row), the first and last rows cut
-/// at the endpoints, folds contribute nothing (specs/text-selection.md Copy).
 #[must_use]
 pub fn read_text(rows: &[Row], a: Point, b: Point) -> String {
     let hi_row = b.row.min(rows.len().saturating_sub(1));
     let mut out = Vec::new();
     for (i, row) in rows.iter().enumerate().take(hi_row + 1).skip(a.row) {
         if !row.is_content() {
+            continue;
+        }
+        let text = row.text();
+        let from = if i == a.row { a.chr } else { 0 };
+        let to = if i == hi_row { Some(b.chr) } else { None };
+        out.push(slice_chars(&text, from, to));
+    }
+    out.join("\n")
+}
+
+#[must_use]
+pub fn read_text_side(rows: &[Row], a: Point, b: Point, side: Side) -> String {
+    let hi_row = b.row.min(rows.len().saturating_sub(1));
+    let mut out = Vec::new();
+    for (i, row) in rows.iter().enumerate().take(hi_row + 1).skip(a.row) {
+        let exists = match side {
+            Side::New => row.new_no().is_some(),
+            Side::Old => row.old_no().is_some(),
+        };
+        if !exists {
             continue;
         }
         let text = row.text();
@@ -190,11 +211,11 @@ mod tests {
     }
 
     fn fold(hidden: usize) -> Row {
-        Row::Fold { lines: (0..hidden).map(|_| ctx("hidden")).collect() }
+        Row::Fold { lines: vec![ctx("hidden"); hidden] }
     }
 
     fn point(row: usize, chr: usize) -> Point {
-        Point { row, chr }
+        Point { row, chr, side: None }
     }
 
     #[test]
@@ -223,6 +244,12 @@ mod tests {
     fn read_text_skips_folds_and_takes_change_rows() {
         let rows = vec![ctx("a"), fold(2), del("removed"), ins("added")];
         assert_eq!(read_text(&rows, point(0, 0), point(3, 4)), "a\nremoved\nadded");
+    }
+    #[test]
+    fn read_text_side_excludes_blank_counterpart_cells() {
+        let rows = vec![del("old"), ins("new"), ctx("same")];
+        assert_eq!(read_text_side(&rows, point(0, 0), point(2, 3), Side::Old), "old\nsame");
+        assert_eq!(read_text_side(&rows, point(0, 0), point(2, 3), Side::New), "new\nsame");
     }
 
     #[test]

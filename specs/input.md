@@ -42,6 +42,7 @@ The keymap is rebindable per action through `[keybindings]` in the plugin config
 | —                                                                          | open a link in rendered markdown            | —                     | click the link                 |
 | `wrap`                                                                     | toggle line wrap                            | `w`                   | —                              |
 | `preview`                                                                  | toggle the markdown preview                 | `m`                   | —                              |
+| `diff-layout`                                                              | toggle unified / side-by-side Changes presentation | `D`                  | —                              |
 | `navigator-position`                                                       | move the navigator clockwise                | `p`                   | —                              |
 | `navigator-hide`                                                           | hide / show the navigator                   | `z`                   | —                              |
 | `navigator-grow` / `navigator-shrink`                                      | grow / shrink the navigator                 | `<` / `>`             | drag the divider               |
@@ -110,6 +111,10 @@ The steps and the skips share the rest:
 - On a fold in the diff, `expand` opens it. An open fold never closes again, so `collapse` scrolls there.
 - Elsewhere, `expand` scrolls the diff right and `collapse` scrolls it left. The scroll is inert while wrap is on.
 
+
+### Diff layout
+
+`diff-layout` (default `D`) toggles the requested layout only in `Normal` mode on the `Changes` source view. It is inert in `Files`, `PR`, previews, notices, composers, and overlays. The preference is rebindable through `[keybindings]`; a narrow pane may paint unified temporarily without changing it.
 ### Edit
 
 `edit` acts on what the cursor names: the comment when one is there, the file otherwise. A

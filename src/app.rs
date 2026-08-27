@@ -100,6 +100,7 @@ struct TabStash {
     toggled_dirs: HashSet<String>,
     diff: FileDiff,
     visible: Vec<Row>,
+    visible_aligned: Vec<crate::diff::AlignedRow>,
     expanded_folds: HashSet<u32>,
     diff_path: Option<String>,
     diff_cursor: usize,
@@ -670,9 +671,12 @@ pub struct App {
     /// files` lists the whole worktree.
     changed: HashMap<String, Annotation>,
     pub diff: FileDiff,
-    /// The rows actually shown: `diff.rows` with each fold collapsed to a marker or
-    /// expanded to its lines. The cursor, scroll, selection, and hit-testing index this.
+    /// The rows actually shown in unified mode: `diff.rows` with each fold collapsed to a marker or
+    /// expanded to its lines.
     pub visible: Vec<Row>,
+    /// The same visible projection aligned once after every diff/fold rebuild. Its indexes are
+    /// logical split rows; each cell retains the corresponding `visible` source index.
+    pub visible_aligned: Vec<crate::diff::AlignedRow>,
     /// Fold anchors (first-hidden-line numbers) currently expanded; survives a poll.
     expanded_folds: HashSet<u32>,
     /// The file the open diff belongs to — the diff title, frozen with the diff
@@ -686,6 +690,8 @@ pub struct App {
     pub h_scroll: usize,
     /// Whether long diff lines wrap (default) or are scrolled horizontally.
     pub wrap: bool,
+    /// The requested Changes presentation. Narrow panes retain this preference while painting unified.
+    pub diff_layout: crate::config::DiffLayout,
     /// Whether the markdown preview is open for the active file tab's file. Both file tabs
     /// render it; the flag is per file tab and resets on a file change (specs/diff-view.md).
     /// Only the armed toggle — `preview_active()` is the honest on-screen predicate.
@@ -733,6 +739,9 @@ pub struct App {
     pub search_pct: u16,
     divider_drag: DividerDrag,
     pub select_anchor: Option<usize>,
+    /// Side selected by the last split-pane text or gutter gesture. Unified mode leaves it at
+    /// the new side, preserving existing comment behavior.
+    pub active_side: Side,
     /// The one live mouse gesture — born at mouse-down, ended by the table in
     /// specs/text-selection.md ("How a gesture ends").
     pub gesture: crate::selection::Gesture,
@@ -909,12 +918,14 @@ impl App {
             changed: HashMap::new(),
             diff: FileDiff::empty(),
             visible: Vec::new(),
+            visible_aligned: Vec::new(),
             expanded_folds: HashSet::new(),
             diff_path: None,
             diff_cursor: 0,
             diff_scroll: 0,
             h_scroll: 0,
             wrap: true,
+            diff_layout: crate::config::DiffLayout::Unified,
             preview: false,
             preview_scroll: 0,
             preview_text: String::new(),
@@ -937,6 +948,7 @@ impl App {
             last_click: None,
             view_reload_held: false,
             select_anchor: None,
+            active_side: Side::New,
             store: CommentStore::new(),
             list_cursor: 0,
             picker_rows: Vec::new(),
@@ -1015,6 +1027,7 @@ impl App {
     pub fn set_plugin_config(&mut self, config: crate::config::PluginConfig) {
         let previous_position =
             self.plugin_config().map(crate::config::PluginConfig::navigator_position);
+        self.diff_layout = config.diff_layout();
         let next_position = config.navigator_position();
         self.config = PluginConfigState::Ready(config);
         if previous_position != Some(next_position) {
@@ -1025,6 +1038,20 @@ impl App {
         // the observation boundary, where the painted frame is still in reach
         // (`lib.rs::reconcile_plugin_config`, specs/text-selection.md).
         self.refresh_theme();
+    }
+
+    /// Toggle the requested Changes layout. The renderer retains this value during narrow fallback.
+    pub fn toggle_diff_layout(&mut self) {
+        if self.tab == Tab::Changes && self.mode == Mode::Normal && !self.preview_active() {
+            let was_split = self.split_active();
+            self.diff_layout = self.diff_layout.toggled();
+            let is_split = self.split_active();
+            if !was_split && is_split {
+                self.diff_cursor = self.logical_row_for_source(self.diff_cursor).unwrap_or(0);
+            } else if was_split && !is_split {
+                self.diff_cursor = self.source_row_for_logical(self.diff_cursor).unwrap_or(0);
+            }
+        }
     }
 
     /// The validated plugin configuration snapshot normal work currently uses.
@@ -1128,6 +1155,7 @@ impl App {
                 self.pick_status = old.pick_status.take();
                 self.diff = std::mem::take(&mut old.diff);
                 self.visible = std::mem::take(&mut old.visible);
+                self.visible_aligned = std::mem::take(&mut old.visible_aligned);
                 self.expanded_folds = std::mem::take(&mut old.expanded_folds);
                 self.diff_path = old.diff_path.take();
                 self.diff_cursor = old.diff_cursor;
@@ -1439,6 +1467,7 @@ impl App {
             self.diff = FileDiff::empty();
             self.diff_path = None;
             self.visible.clear();
+            self.visible_aligned.clear();
             self.reset_diff_view();
             return;
         };
@@ -1537,7 +1566,7 @@ impl App {
             self.reset_diff_view();
             return;
         }
-        let last = self.visible.len() - 1;
+        let last = self.diff_len().saturating_sub(1);
         let clamped = self.diff_cursor.min(last);
         if clamped != self.diff_cursor {
             self.reveal_diff = true;
@@ -1547,8 +1576,7 @@ impl App {
         self.select_anchor = self.select_anchor.map(|a| a.min(last));
     }
 
-    /// Flatten `diff.rows` into `visible`: an expanded fold becomes its lines, a
-    /// collapsed fold stays a single marker row.
+    /// Rebuild both source and split projections. Alignment happens here, never during paint.
     fn rebuild_visible(&mut self) {
         self.visible = self
             .diff
@@ -1563,6 +1591,50 @@ impl App {
                 _ => vec![row.clone()],
             })
             .collect();
+        self.visible_aligned = crate::diff::align_rows(&self.visible);
+    }
+
+    fn split_active(&self) -> bool {
+        self.tab == Tab::Changes
+            && !self.preview_active()
+            && self.diff_layout == crate::config::DiffLayout::SideBySide
+            && self.pane_width.get() >= 48
+    }
+
+    fn diff_len(&self) -> usize {
+        if self.split_active() { self.visible_aligned.len() } else { self.visible.len() }
+    }
+
+    fn logical_row_for_source(&self, source: usize) -> Option<usize> {
+        self.visible_aligned
+            .iter()
+            .position(|row| row.old_index == Some(source) || row.new_index == Some(source))
+    }
+
+    fn source_row_for_logical(&self, logical: usize) -> Option<usize> {
+        let row = self.visible_aligned.get(logical)?;
+        match self.active_side {
+            Side::Old => row.old_index.or(row.new_index),
+            Side::New => row.new_index.or(row.old_index),
+        }
+    }
+
+    #[must_use]
+    pub fn split_row(&self, logical: usize, side: Side) -> Option<&Row> {
+        let row = self.visible_aligned.get(logical)?;
+        match side {
+            Side::Old => row.old.as_ref(),
+            Side::New => row.new.as_ref(),
+        }
+    }
+
+    #[must_use]
+    pub fn split_source_index(&self, logical: usize, side: Side) -> Option<usize> {
+        let row = self.visible_aligned.get(logical)?;
+        match side {
+            Side::Old => row.old_index,
+            Side::New => row.new_index,
+        }
     }
 
     /// Expand the fold under the cursor, revealing its hidden lines. Expansion is
@@ -2179,12 +2251,12 @@ impl App {
     /// upward has its cursor at the top, and following the cursor there would leave the box
     /// off the bottom — the selection covers the same rows either way (`specs/diff-view.md`).
     pub fn reveal_diff_cursor(&mut self, heights: &[usize], viewport: usize) {
-        if self.visible.is_empty() {
+        if self.diff_len() == 0 {
             self.diff_scroll = 0;
             return;
         }
         let target = if self.composing() { self.selection_range().1 } else { self.diff_cursor };
-        let target = target.min(self.visible.len() - 1);
+        let target = target.min(self.diff_len() - 1);
         self.diff_scroll = keep_in_view(target, self.diff_scroll, heights, viewport);
     }
 
@@ -2548,6 +2620,7 @@ impl App {
         std::mem::swap(&mut self.toggled_dirs, &mut self.stash.toggled_dirs);
         std::mem::swap(&mut self.diff, &mut self.stash.diff);
         std::mem::swap(&mut self.visible, &mut self.stash.visible);
+        std::mem::swap(&mut self.visible_aligned, &mut self.stash.visible_aligned);
         std::mem::swap(&mut self.expanded_folds, &mut self.stash.expanded_folds);
         std::mem::swap(&mut self.diff_path, &mut self.stash.diff_path);
         std::mem::swap(&mut self.diff_cursor, &mut self.stash.diff_cursor);
@@ -2597,8 +2670,8 @@ impl App {
                 // view's cursor waits untouched for the toggle back (specs/diff-view.md).
                 if self.preview_active() {
                     self.preview_scroll_by(delta);
-                } else if !self.visible.is_empty() {
-                    let mut target = step(self.diff_cursor, delta, self.visible.len());
+                } else if self.diff_len() > 0 {
+                    let mut target = step(self.diff_cursor, delta, self.diff_len());
                     if let Some(a) = self.select_anchor {
                         target = self.fold_clamped(a, target);
                     }
@@ -3091,18 +3164,20 @@ impl App {
         self.last_click = Some((now, col, row, target, count));
         count
     }
-
-    /// Start a gutter comment gesture on `row`: line cursor there, selection cleared, the
-    /// range extended by drag and the composer opened on release (specs/input.md).
-    pub fn start_gutter_drag(&mut self, row: usize) {
+    pub fn start_gutter_drag_on_side(&mut self, row: usize, side: Side) {
         if self.composing() || row >= self.visible.len() {
-            return; // the gutter is inert while the comment editor is open (specs/input.md)
+            return;
         }
         self.focus = Focus::Diff;
+        self.active_side = side;
         self.diff_cursor = row;
         self.select_anchor = None;
         self.gesture = crate::selection::Gesture::Gutter;
         self.reveal_diff = true;
+    }
+
+    pub fn start_gutter_drag(&mut self, row: usize) {
+        self.start_gutter_drag_on_side(row, Side::New);
     }
 
     /// Finish a gutter gesture at its release: open the composer on the selected line or
@@ -3589,17 +3664,36 @@ impl App {
         self.leave_compose();
     }
 
-    /// Whether the selection has at least one content row a comment can attach to —
-    /// a fold marker does not qualify.
+    /// Whether the selection has at least one content row a comment can attach to.
     fn has_anchorable_selection(&self) -> bool {
         let (lo, hi) = self.selection_range();
-        self.visible.get(lo..=hi).is_some_and(|s| s.iter().any(Row::is_content))
+        if self.split_active() {
+            return self.visible_aligned.get(lo..=hi).is_some_and(|rows| {
+                rows.iter().any(|row| match self.active_side {
+                    Side::New => row.new.as_ref().is_some_and(|row| row.new_no().is_some()),
+                    Side::Old => row.old.as_ref().is_some_and(|row| row.old_no().is_some()),
+                })
+            });
+        }
+        self.visible.get(lo..=hi).is_some_and(|rows| {
+            rows.iter().any(|row| row.new_no().is_some() || row.old_no().is_some())
+        })
     }
 
-    /// The `(side, start, end, snippet)` the current selection anchors to.
     fn selection_anchor(&self) -> Option<(Side, u32, u32, String)> {
         let (lo, hi) = self.selection_range();
-        anchor(self.visible.get(lo..=hi)?)
+        if self.split_active() {
+            let rows = self.visible_aligned.get(lo..=hi)?;
+            return anchor_on_side(
+                rows.iter().filter_map(|row| match self.active_side {
+                    Side::New => row.new.as_ref(),
+                    Side::Old => row.old.as_ref(),
+                }),
+                self.active_side,
+            );
+        }
+        let rows = self.visible.get(lo..=hi)?;
+        anchor_on_side(rows.iter(), Side::New).or_else(|| anchor_on_side(rows.iter(), Side::Old))
     }
 
     fn build_comment(&self, text: String) -> Option<Comment> {
@@ -4402,13 +4496,17 @@ impl App {
             self.status = "no comments to send".to_string();
             return;
         }
+        self.send_payload(self.authored_payload());
+    }
+
+    fn authored_payload(&self) -> PendingSend {
         let refs: Vec<&Comment> = self.store.iter().collect();
         let count = refs.len();
-        self.send_payload(PendingSend {
+        PendingSend {
             text: format_all(&refs),
             success: format!("added {} {}", count, if count == 1 { "comment" } else { "comments" }),
             consume_authored: true,
-        });
+        }
     }
 
     /// Send the selected PR conversation. The formatter runs before agent discovery so every
@@ -4443,7 +4541,7 @@ impl App {
     /// Open the picker over `rows`, arming the highlight on the agent this session sent to
     /// last when it is still a candidate, else the first row (`specs/herdr-host.md`).
     pub fn open_picker(&mut self, rows: Vec<AgentChoice>) {
-        if rows.is_empty() || self.mode == Mode::Picker || self.pending_send.is_none() {
+        if rows.is_empty() || self.mode == Mode::Picker {
             return;
         }
         self.picker_cursor = armed_row(&rows, self.last_sent_pane.as_deref());
@@ -5001,28 +5099,27 @@ fn line_in(c: &Comment, row: &Row) -> bool {
     no.is_some_and(|n| c.start <= n && n <= c.end)
 }
 
-/// Compute `(side, start, end, snippet)` for a selection of diff rows.
-///
-/// New-side numbers win when present (insertion/context rows); a pure deletion
-/// anchors to the old side. The snippet keeps each row's `+`/`−`/space marker.
-fn anchor(selected: &[Row]) -> Option<(Side, u32, u32, String)> {
-    let mut new: Option<(u32, u32)> = None;
-    let mut old: Option<(u32, u32)> = None;
+fn anchor_on_side<'a>(
+    selected: impl IntoIterator<Item = &'a Row>,
+    side: Side,
+) -> Option<(Side, u32, u32, String)> {
+    let mut range: Option<(u32, u32)> = None;
     let mut snippet = String::new();
-    for row in selected.iter().filter(|row| row.is_content()) {
-        if !snippet.is_empty() {
+    for row in selected {
+        let no = match side {
+            Side::New => row.new_no(),
+            Side::Old => row.old_no(),
+        };
+        if let Some(no) = no {
+            let entry = range.get_or_insert((no, no));
+            entry.0 = entry.0.min(no);
+            entry.1 = entry.1.max(no);
+            snippet.push(row.marker());
+            snippet.push_str(&row.text());
             snippet.push('\n');
         }
-        snippet.push_str(&row.marker_text());
-        if let Some(line) = row.new_no() {
-            new = Some(new.map_or((line, line), |(min, max)| (min.min(line), max.max(line))));
-        }
-        if let Some(line) = row.old_no() {
-            old = Some(old.map_or((line, line), |(min, max)| (min.min(line), max.max(line))));
-        }
     }
-    let (side, (start, end)) =
-        new.map(|range| (Side::New, range)).or_else(|| old.map(|range| (Side::Old, range)))?;
+    let (start, end) = range?;
     Some((side, start, end, snippet))
 }
 
@@ -5041,8 +5138,8 @@ mod tests {
         app.apply_pr(crate::forge::PrView::NoPr);
         let drag = TextDrag {
             surface: Surface::PrNav,
-            anchor: Point { row: 0, chr: 0 },
-            extent: Point { row: 0, chr: 3 },
+            anchor: Point { row: 0, chr: 0, side: None },
+            extent: Point { row: 0, chr: 3, side: None },
         };
         app.settle_selection(drag, "text".into());
 
@@ -5606,5 +5703,19 @@ mod tests {
         app.start_edit();
         assert!(!app.composing(), "the card is off screen, so it does not claim the key");
         assert!(app.editor_request.is_some(), "the file row under the eye wins");
+    }
+    #[test]
+    fn diff_layout_toggle_is_changes_source_only() {
+        let mut app = App::new(std::env::temp_dir(), Scope::Uncommitted, None);
+        assert_eq!(app.diff_layout, crate::config::DiffLayout::Unified);
+        app.toggle_diff_layout();
+        assert_eq!(app.diff_layout, crate::config::DiffLayout::SideBySide);
+        app.tab = crate::app::Tab::AllFiles;
+        app.toggle_diff_layout();
+        assert_eq!(app.diff_layout, crate::config::DiffLayout::SideBySide);
+        app.tab = crate::app::Tab::Changes;
+        app.preview = true;
+        app.toggle_diff_layout();
+        assert_eq!(app.diff_layout, crate::config::DiffLayout::Unified);
     }
 }

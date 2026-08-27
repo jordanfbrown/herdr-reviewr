@@ -108,6 +108,8 @@ A layout change moves nothing else (`overview.md`), and both remembered shares p
 - No automatic position or content-sized navigator. Layout changes only through config, `p`, `z`, resize keys, or dragging.
 - No configured hidden default. The navigator starts visible, and only `navigator-hide` hides it.
 - No multi-file review stream. Each read pane shows one selected item.
+
+The Changes source view may paint an aligned old-left/new-right diff when `diff_layout` is `side-by-side`. Its effective minimum inner body width is 48 cells: two 7-cell gutters, a one-cell divider, and 33 useful code cells. Below that width it paints unified; the stored preference is unchanged, so widening restores the split. Files and Markdown previews remain single-pane.
 - No header `Send` button. Send lives on its keys and the footer (`input.md`).
 
 ## Related specs

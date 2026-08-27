@@ -66,10 +66,11 @@ impl Config {
     }
 }
 
-const PLUGIN_CONFIG_KEYS: [&str; 11] = [
+const PLUGIN_CONFIG_KEYS: [&str; 12] = [
     "theme",
     "default_scope",
     "navigator_position",
+    "diff_layout",
     "toggle_placement",
     "toggle_direction",
     "auto_open",
@@ -118,6 +119,31 @@ impl NavigatorPosition {
     }
 }
 
+/// The Changes tab's preferred diff presentation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DiffLayout {
+    #[default]
+    Unified,
+    SideBySide,
+}
+
+impl DiffLayout {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unified => "unified",
+            Self::SideBySide => "side-by-side",
+        }
+    }
+
+    #[must_use]
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Unified => Self::SideBySide,
+            Self::SideBySide => Self::Unified,
+        }
+    }
+}
+
 /// Where the toggle action opens the reviewr pane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TogglePlacement {
@@ -160,6 +186,7 @@ pub struct PluginConfig {
     theme: String,
     default_scope: crate::model::Scope,
     navigator_position: NavigatorPosition,
+    diff_layout: DiffLayout,
     toggle_placement: TogglePlacement,
     toggle_direction: ToggleDirection,
     auto_open: bool,
@@ -176,6 +203,7 @@ impl Default for PluginConfig {
             theme: crate::theme::DEFAULT.to_owned(),
             default_scope: crate::model::Scope::Uncommitted,
             navigator_position: NavigatorPosition::Right,
+            diff_layout: DiffLayout::Unified,
             toggle_placement: TogglePlacement::Split,
             toggle_direction: ToggleDirection::Right,
             auto_open: true,
@@ -201,6 +229,10 @@ impl PluginConfig {
 
     pub fn navigator_position(&self) -> NavigatorPosition {
         self.navigator_position
+    }
+
+    pub fn diff_layout(&self) -> DiffLayout {
+        self.diff_layout
     }
 
     pub fn toggle_placement(&self) -> TogglePlacement {
@@ -261,6 +293,7 @@ impl PluginConfig {
             "theme": self.theme,
             "default_scope": self.default_scope.name(),
             "navigator_position": self.navigator_position.as_str(),
+            "diff_layout": self.diff_layout.as_str(),
             "toggle_placement": self.toggle_placement.as_str(),
             "toggle_direction": self.toggle_direction.as_str(),
             "auto_open": self.auto_open,
@@ -394,6 +427,14 @@ fn parse_plugin_config(path: &Path) -> Result<PluginConfig, PluginConfigError> {
                 ));
             }
         };
+    }
+    if let Some(value) = table.get("diff_layout") {
+        config.diff_layout =
+            match string_value(path, "diff_layout", value, "one of unified, side-by-side")? {
+                "unified" => DiffLayout::Unified,
+                "side-by-side" => DiffLayout::SideBySide,
+                _ => return Err(value_error(path, "diff_layout", "one of unified, side-by-side")),
+            };
     }
     if let Some(value) = table.get("toggle_placement") {
         config.toggle_placement = match string_value(

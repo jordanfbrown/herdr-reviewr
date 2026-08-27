@@ -1896,6 +1896,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent, area: Rect, keymap: &Keymap) -> 
             K::PrevFile => app.prev_file(),
             K::Wrap => app.toggle_wrap(),
             K::Preview => app.toggle_preview(),
+            K::DiffLayout => app.toggle_diff_layout(),
             K::NavigatorPosition => app.cycle_navigator_position(),
             K::NavigatorHide => app.toggle_navigator_hidden(),
             K::NavigatorGrow => app.resize_navigator(4),
@@ -1966,6 +1967,9 @@ fn handle_text_down(app: &mut App, m: MouseEvent, area: Rect) -> bool {
             Gesture::Text { drag: TextDrag { surface, anchor: point, extent: point }, count };
     };
     if file_tab && let Some(point) = ui::read_point_at(area, app, m.column, m.row) {
+        if let Some(side) = point.side {
+            app.active_side = side;
+        }
         arm(app, Surface::Read, point);
         return true;
     }
@@ -1981,11 +1985,11 @@ fn handle_text_down(app: &mut App, m: MouseEvent, area: Rect) -> bool {
         && let Some(i) =
             ui::hit_file(area, app, m.column, m.row, app.file_rows.len(), app.file_scroll)
     {
-        arm(app, Surface::Files, Point { row: i, chr: 0 });
+        arm(app, Surface::Files, Point { row: i, chr: 0, side: None });
         return true;
     }
     if !file_tab && let Some(i) = ui::pr_nav_display_row(area, app, m.column, m.row, false) {
-        arm(app, Surface::PrNav, Point { row: i, chr: 0 });
+        arm(app, Surface::PrNav, Point { row: i, chr: 0, side: None });
         return true;
     }
     false
@@ -2076,11 +2080,14 @@ fn text_drag_set_extent(app: &mut App, m: MouseEvent, area: Rect) {
             } else {
                 let y = m.row.clamp(inner.y, inner.y + inner.height - 1);
                 let i = ((y - inner.y) as usize + app.file_scroll).min(app.file_rows.len() - 1);
-                Some(Point { row: i, chr: 0 })
+                Some(Point { row: i, chr: 0, side: None })
             }
         }
-        Surface::PrNav => ui::pr_nav_display_row(area, app, m.column, m.row, true)
-            .map(|i| Point { row: i, chr: 0 }),
+        Surface::PrNav => ui::pr_nav_display_row(area, app, m.column, m.row, true).map(|i| Point {
+            row: i,
+            chr: 0,
+            side: None,
+        }),
     };
     if let Some(p) = extent
         && let crate::selection::Gesture::Text { drag, .. } = &mut app.gesture
@@ -2186,8 +2193,14 @@ fn multi_click_copy(
 ) -> bool {
     use crate::selection::Point;
     let row = drag.anchor.row;
-    let whole_row = Point { row, chr: usize::MAX };
-    match surface_text(app, area, drag.surface, Point { row, chr: 0 }, whole_row) {
+    let whole_row = Point { row, chr: usize::MAX, side: drag.anchor.side };
+    match surface_text(
+        app,
+        area,
+        drag.surface,
+        Point { row, chr: 0, side: drag.anchor.side },
+        whole_row,
+    ) {
         // An empty row yields empty text: fall back to the click, so the gesture is never
         // a silent no-op (specs/text-selection.md).
         Some(t) if !t.is_empty() => {
@@ -2210,8 +2223,14 @@ fn word_click_copy(
 ) -> bool {
     use crate::selection::{Point, TextDrag};
     let row = drag.anchor.row;
-    let whole_row = Point { row, chr: usize::MAX };
-    let Some(line) = surface_text(app, area, drag.surface, Point { row, chr: 0 }, whole_row) else {
+    let whole_row = Point { row, chr: usize::MAX, side: drag.anchor.side };
+    let Some(line) = surface_text(
+        app,
+        area,
+        drag.surface,
+        Point { row, chr: 0, side: drag.anchor.side },
+        whole_row,
+    ) else {
         return false;
     };
     let Some((s, e)) = crate::selection::token_at(&line, drag.anchor.chr) else {
@@ -2222,8 +2241,8 @@ fn word_click_copy(
     app.settle_selection(
         TextDrag {
             surface: drag.surface,
-            anchor: Point { row, chr: s },
-            extent: Point { row, chr: e },
+            anchor: Point { row, chr: s, side: drag.anchor.side },
+            extent: Point { row, chr: e, side: drag.anchor.side },
         },
         word,
     );
@@ -2241,16 +2260,22 @@ fn line_click_copy(
 ) -> bool {
     use crate::selection::{Point, TextDrag};
     let row = drag.anchor.row;
-    let whole_row = Point { row, chr: usize::MAX };
-    match surface_text(app, area, drag.surface, Point { row, chr: 0 }, whole_row) {
+    let whole_row = Point { row, chr: usize::MAX, side: drag.anchor.side };
+    match surface_text(
+        app,
+        area,
+        drag.surface,
+        Point { row, chr: 0, side: drag.anchor.side },
+        whole_row,
+    ) {
         Some(line) if !line.is_empty() => {
             let last = line.chars().count() - 1;
             app.copy_selection_text(target, &line);
             app.settle_selection(
                 TextDrag {
                     surface: drag.surface,
-                    anchor: Point { row, chr: 0 },
-                    extent: Point { row, chr: last },
+                    anchor: Point { row, chr: 0, side: drag.anchor.side },
+                    extent: Point { row, chr: last, side: drag.anchor.side },
                 },
                 line,
             );
@@ -2296,7 +2321,10 @@ fn surface_text(
 ) -> Option<String> {
     use crate::selection::{Surface, lines_text};
     match surface {
-        Surface::Read => Some(crate::selection::read_text(&app.visible, a, b)),
+        Surface::Read => Some(match a.side.or(b.side) {
+            Some(side) => crate::selection::read_text_side(&app.visible, a, b, side),
+            None => crate::selection::read_text(&app.visible, a, b),
+        }),
         Surface::Files => {
             Some(crate::selection::files_text(&app.file_rows, &app.entries, a.row, b.row))
         }
@@ -2591,14 +2619,12 @@ pub fn handle_mouse(
                 match hit {
                     ui::HeaderHit::Tab(tab) => app.set_tab(tab)?,
                     ui::HeaderHit::Scope => app.set_scope(app.next_chip_scope())?,
-                    // Inert when the picker cannot open here — with a `--base` flag the
-                    // label names the base without offering a choice (`specs/input.md`).
                     ui::HeaderHit::Base => app.open_base_picker(),
                     ui::HeaderHit::Pick => app.open_commit_picker(),
                 }
+            } else if let Some((row, side)) = ui::gutter_side_at(area, app, m.column, m.row) {
+                app.start_gutter_drag_on_side(row, side);
             } else if let Some(row) = ui::gutter_row_at(area, app, m.column, m.row) {
-                // The gutter owns mouse commenting: click a line or drag a range, and the
-                // composer opens on release (specs/input.md).
                 app.start_gutter_drag(row);
             } else if handle_text_down(app, m, area) {
                 // A pending click or text drag armed. Every painted preview cell is claimed
@@ -2768,8 +2794,8 @@ mod refresh_tests {
         let mut app = App::new(std::path::PathBuf::from("."), Scope::Uncommitted, None);
         let drag = TextDrag {
             surface: Surface::Read,
-            anchor: Point { row: 0, chr: 0 },
-            extent: Point { row: 0, chr: 4 },
+            anchor: Point { row: 0, chr: 0, side: None },
+            extent: Point { row: 0, chr: 4, side: None },
         };
         app.gesture = Gesture::Text { drag, count: 1 };
         app.settle_selection(drag, "alpha".into());
@@ -3518,8 +3544,8 @@ mod refresh_tests {
         let press = Gesture::Text {
             drag: TextDrag {
                 surface: Surface::Read,
-                anchor: Point { row: 0, chr: 0 },
-                extent: Point { row: 0, chr: 0 },
+                anchor: Point { row: 0, chr: 0, side: None },
+                extent: Point { row: 0, chr: 0, side: None },
             },
             count: 1,
         };

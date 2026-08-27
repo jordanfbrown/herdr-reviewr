@@ -4,6 +4,7 @@
 //! diff snippet, then the text. Export is consume-on-success: the caller removes
 //! a comment only after `export` returns `Ok`.
 
+use std::fmt::Write as _;
 use std::io::Write;
 use std::process::Stdio;
 
@@ -50,14 +51,14 @@ pub fn format_pr_conversation(
         pr.number, pr.title, pr.url, comment.author
     );
     if matches!(comment.kind, crate::forge::CommentKind::Finding) {
-        out.push_str(&format!("\nAnchor: {}", comment.anchor));
+        let _ = write!(out, "\nAnchor: {}", comment.anchor);
         if let Some(snippet) = &comment.snippet {
-            out.push_str(&format!("\n\nDiff snippet:\n{snippet}"));
+            let _ = write!(out, "\n\nDiff snippet:\n{snippet}");
         }
     }
     out.push_str("\n\nConversation:");
     for message in &comment.messages {
-        out.push_str(&format!("\n\n@{}:\n{}", message.author, message.body));
+        let _ = write!(out, "\n\n@{}:\n{}", message.author, message.body);
     }
     if comment.conversation_truncated {
         out.push_str("\n\nWarning: this conversation is truncated; open the PR URL for the remaining messages.");

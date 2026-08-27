@@ -21,7 +21,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{App, Band, Focus, FooterAction, Mode, Tab};
 use crate::config::NavigatorPosition;
-use crate::diff::{FileDiff, FileState, Row};
+use crate::diff::{AlignedRow, FileDiff, FileState, Row};
 use crate::file_list::{Annotation, RowKind};
 use crate::forge;
 use crate::git;
@@ -305,6 +305,7 @@ pub fn diff_viewport_height(area: Rect, app: &App) -> usize {
 #[must_use]
 pub fn diff_row_heights(app: &App, area: Rect) -> Vec<usize> {
     let width = inner_rect(panes(area, app).diff).width as usize;
+
     let gutter_w = gutter_for(&app.diff);
     let p = app.palette();
     // A row's display height is its wrapped code lines plus any inline comment cards under
@@ -336,6 +337,8 @@ pub fn diff_row_heights(app: &App, area: Rect) -> Vec<usize> {
 pub enum Slot {
     /// A code display line: the logical row and its wrap-segment index.
     Code { row: usize, seg: usize },
+    /// A split code display line carrying source indexes and wrap segments.
+    SplitCode { old: Option<(usize, usize)>, new: Option<(usize, usize)> },
     /// A spliced comment card's display line: the store index and the line within the card.
     Card { comment: usize, line: usize },
     /// A composer display line, inert for selection.
@@ -362,6 +365,81 @@ fn tail<T: Clone>(v: Vec<T>, cap: usize) -> Vec<T> {
     if v.len() > cap { v[v.len() - cap..].to_vec() } else { v }
 }
 
+/// Minimum inner read width for two gutters, a divider, and useful code on both sides.
+pub const SIDE_BY_SIDE_MIN_WIDTH: usize = 48;
+
+#[derive(Clone, Copy)]
+struct SplitGeometry {
+    left: Rect,
+    right: Rect,
+    gutter: usize,
+}
+
+fn split_active(app: &App, width: usize) -> bool {
+    app.tab == Tab::Changes
+        && !app.preview_active()
+        && app.diff_layout == crate::config::DiffLayout::SideBySide
+        && width >= SIDE_BY_SIDE_MIN_WIDTH
+}
+
+fn split_geometry(inner: Rect) -> SplitGeometry {
+    let divider = inner.x + inner.width / 2;
+    SplitGeometry {
+        left: Rect { width: divider - inner.x, ..inner },
+        right: Rect { x: divider + 1, width: inner.right().saturating_sub(divider + 1), ..inner },
+        gutter: 7,
+    }
+}
+
+/// The split side under a painted cell; the divider is inert.
+#[must_use]
+pub fn split_side_at(app: &App, inner: Rect, col: u16) -> Option<crate::model::Side> {
+    if !split_active(app, inner.width as usize) {
+        return None;
+    }
+    let g = split_geometry(inner);
+    if col >= g.left.x && col < g.left.right() {
+        Some(crate::model::Side::Old)
+    } else if col >= g.right.x && col < g.right.right() {
+        Some(crate::model::Side::New)
+    } else {
+        None
+    }
+}
+
+fn split_slot_rows(app: &App, inner: Rect) -> Vec<Slot> {
+    let g = split_geometry(inner);
+    let cards = app.card_rows();
+    let editing = editing_comment(app);
+    let p = app.palette();
+    let mut out = Vec::new();
+    for AlignedRow { old, new, old_index, new_index } in &app.visible_aligned {
+        let oh =
+            old.as_ref().map_or(1, |r| row_height(r, g.gutter, g.left.width as usize, app.wrap));
+        let nh =
+            new.as_ref().map_or(1, |r| row_height(r, g.gutter, g.right.width as usize, app.wrap));
+        for seg in 0..oh.max(nh) {
+            out.push(Slot::SplitCode {
+                old: old_index.filter(|_| seg < oh).map(|i| (i, seg)),
+                new: new_index.filter(|_| seg < nh).map(|i| (i, seg)),
+            });
+        }
+        for &(_, ci) in
+            cards.iter().filter(|&&(row, _)| *old_index == Some(row) || *new_index == Some(row))
+        {
+            if Some(ci) != editing
+                && let Some(comment) = app.store.get(ci)
+            {
+                out.extend(
+                    (0..comment_card_lines(comment, inner.width as usize, p).len())
+                        .map(|line| Slot::Card { comment: ci, line }),
+                );
+            }
+        }
+    }
+    out
+}
+
 /// The read pane's display lines top to bottom for the current state — the one layout walk.
 /// Two callers: `render_diff_view` paints from it and records it, and a mid-gesture scroll
 /// re-runs it (`refresh_read_layout`). Empty in the preview and on a notice.
@@ -376,6 +454,14 @@ fn read_layout(app: &App, inner: Rect) -> Vec<Slot> {
     let cards = app.card_rows();
     let editing = editing_comment(app);
     let rows = app.visible.len();
+    if split_active(app, width) {
+        let body_h = if app.mode == Mode::Find { height.saturating_sub(1) } else { height };
+        return split_slot_rows(app, inner)
+            .into_iter()
+            .skip(app.diff_scroll)
+            .take(body_h)
+            .collect();
+    }
     // A row's slots: its wrapped code lines, then its visible cards' lines — the same order
     // `render_diff_view`'s `row_lines` paints them.
     let row_slots = |i: usize| -> Vec<Slot> {
@@ -511,6 +597,32 @@ pub fn read_point_at(area: Rect, app: &App, col: u16, row: u16) -> Option<crate:
     if !contains(pane.inner, col, row) {
         return None;
     }
+    if split_active(app, pane.inner.width as usize) {
+        let g = split_geometry(pane.inner);
+        let side_kind = split_side_at(app, pane.inner, col)?;
+        let side = if side_kind == crate::model::Side::Old { g.left } else { g.right };
+        if ((col - side.x) as usize) < g.gutter {
+            return None;
+        }
+        let Slot::SplitCode { old, new } =
+            *app.painted_slots().get((row - pane.inner.y) as usize)?
+        else {
+            return None;
+        };
+        let (index, seg) = if side_kind == crate::model::Side::Old { old } else { new }?;
+        let source = &app.visible[index];
+        return source.is_content().then(|| crate::selection::Point {
+            row: index,
+            chr: seg_char_at(
+                app,
+                source,
+                seg,
+                side.width as usize - g.gutter,
+                (col - side.x) as usize - g.gutter,
+            ),
+            side: Some(side_kind),
+        });
+    }
     // The gutter is chrome, not text: a mouse-down there never starts a text drag
     // (specs/input.md owns the gutter's gestures).
     if (col as usize) < pane.inner.x as usize + pane.prefix_w {
@@ -529,6 +641,7 @@ pub fn read_point_at(area: Rect, app: &App, col: u16, row: u16) -> Option<crate:
     Some(crate::selection::Point {
         row: li,
         chr: seg_char_at(app, r, seg, code_width, col_in_code),
+        side: None,
     })
 }
 
@@ -546,6 +659,38 @@ pub fn read_point_clamped(
     if pane.inner.width == 0 || pane.inner.height == 0 {
         return None;
     }
+    if split_active(app, pane.inner.width as usize) {
+        let geometry = split_geometry(pane.inner);
+        let side = app.text_drag().and_then(|drag| drag.anchor.side).unwrap_or(app.active_side);
+        let cell = if side == crate::model::Side::Old { geometry.left } else { geometry.right };
+        let y = row.clamp(pane.inner.y, pane.inner.y + pane.inner.height - 1);
+        let slots = app.painted_slots();
+        let at = ((y - pane.inner.y) as usize).min(slots.len().saturating_sub(1));
+        let (index, seg) =
+            (0..=at).rev().chain(at + 1..slots.len()).find_map(|i| match slots.get(i) {
+                Some(Slot::SplitCode { old, new }) => {
+                    if side == crate::model::Side::Old {
+                        *old
+                    } else {
+                        *new
+                    }
+                }
+                _ => None,
+            })?;
+        let x = col
+            .clamp(cell.x.saturating_add(geometry.gutter as u16), cell.right().saturating_sub(1));
+        return Some(crate::selection::Point {
+            row: index,
+            chr: seg_char_at(
+                app,
+                &app.visible[index],
+                seg,
+                cell.width as usize - geometry.gutter,
+                (x - cell.x) as usize - geometry.gutter,
+            ),
+            side: Some(side),
+        });
+    }
     let col = col.clamp(pane.inner.x, pane.inner.x + pane.inner.width - 1);
     let row = row.clamp(pane.inner.y, pane.inner.y + pane.inner.height - 1);
     let slots = app.painted_slots();
@@ -558,23 +703,51 @@ pub fn read_point_clamped(
     let r = &app.visible[li];
     if !r.is_content() {
         // A fold paints as one Code slot; snap its endpoint to the row's start.
-        return Some(crate::selection::Point { row: li, chr: 0 });
+        return Some(crate::selection::Point { row: li, chr: 0, side: None });
     }
     let code_width = (pane.inner.width as usize).saturating_sub(pane.prefix_w).max(1);
     let col_in_code = (col as usize).saturating_sub(pane.inner.x as usize + pane.prefix_w);
     Some(crate::selection::Point {
         row: li,
         chr: seg_char_at(app, r, seg, code_width, col_in_code),
+        side: None,
     })
 }
 
 /// The commentable logical row whose gutter `(col, row)` lands on, `None` elsewhere. The
 /// whole gutter width takes the click and the drag, and a continuation line's gutter belongs
 /// to its logical row (specs/diff-view.md).
+/// The commentable logical row and side whose gutter receives a split-pane gesture.
 #[must_use]
+pub fn gutter_side_at(
+    area: Rect,
+    app: &App,
+    col: u16,
+    row: u16,
+) -> Option<(usize, crate::model::Side)> {
+    let pane = read_pane(area, app);
+    if !split_active(app, pane.inner.width as usize) || !contains(pane.inner, col, row) {
+        return None;
+    }
+    let g = split_geometry(pane.inner);
+    let side = split_side_at(app, pane.inner, col)?;
+    let cell = if side == crate::model::Side::Old { g.left } else { g.right };
+    if (col - cell.x) as usize >= g.gutter {
+        return None;
+    }
+    let Slot::SplitCode { old, new } = *app.painted_slots().get((row - pane.inner.y) as usize)?
+    else {
+        return None;
+    };
+    let index = if side == crate::model::Side::Old { old } else { new }?.0;
+    app.visible[index].is_content().then_some((index, side))
+}
 pub fn gutter_row_at(area: Rect, app: &App, col: u16, row: u16) -> Option<usize> {
     if app.tab == Tab::Pr {
         return None;
+    }
+    if let Some((index, _)) = gutter_side_at(area, app, col, row) {
+        return Some(index);
     }
     let pane = read_pane(area, app);
     if !contains(pane.inner, col, row) || (col as usize) >= pane.inner.x as usize + pane.prefix_w {
@@ -624,6 +797,43 @@ fn render_text_selection(frame: &mut Frame, app: &App, area: Rect) {
         }
         Surface::Read => {
             let pane = read_pane(area, app);
+            if split_active(app, pane.inner.width as usize) {
+                let geometry = split_geometry(pane.inner);
+                let side = drag.anchor.side.unwrap_or(app.active_side);
+                let rect =
+                    if side == crate::model::Side::Old { geometry.left } else { geometry.right };
+                let code_width = rect.width as usize - geometry.gutter;
+                for (off, slot) in app.painted_slots().iter().enumerate() {
+                    let Slot::SplitCode { old, new } = *slot else { continue };
+                    let Some((li, seg)) = (if side == crate::model::Side::Old { old } else { new })
+                    else {
+                        continue;
+                    };
+                    if li < lo.row || li > hi.row || !app.visible[li].is_content() {
+                        continue;
+                    }
+                    let cells = code_cells(&app.visible[li], false, &[]);
+                    let (seg_s, seg_e) = seg_cell_range(app, &cells, seg, code_width);
+                    let y = pane.inner.y + off as u16;
+                    let mut x = rect.x as usize + geometry.gutter;
+                    for painted in &cells[seg_s..seg_e] {
+                        let selected = (li > lo.row || painted.src >= lo.chr)
+                            && (li < hi.row || painted.src <= hi.chr);
+                        if selected {
+                            for dx in 0..painted.w {
+                                if x + dx < rect.right() as usize
+                                    && let Some(cell) =
+                                        frame.buffer_mut().cell_mut(((x + dx) as u16, y))
+                                {
+                                    cell.set_style(style);
+                                }
+                            }
+                        }
+                        x += painted.w;
+                    }
+                }
+                return;
+            }
             let slots = app.painted_slots();
             let code_width = (pane.inner.width as usize).saturating_sub(pane.prefix_w).max(1);
             for (off, slot) in slots.iter().enumerate() {
@@ -870,7 +1080,11 @@ fn card_point(
     }
     let body = line.saturating_sub(1).min(texts.len() - 1);
     let text_col = (col as usize).saturating_sub(pane.inner.x as usize + CARD_TEXT_X);
-    Some(crate::selection::Point { row: body, chr: char_at_col(&texts[body], text_col) })
+    Some(crate::selection::Point {
+        row: body,
+        chr: char_at_col(&texts[body], text_col),
+        side: None,
+    })
 }
 
 /// A painted line's selectable text: trailing pad columns are chrome, and a full-width rule
@@ -974,7 +1188,11 @@ pub fn painted_point(
         return None;
     };
     let text_col = (col as usize).saturating_sub(sel.rect.x as usize + sel.offsets[line]);
-    Some(crate::selection::Point { row: line, chr: char_at_col(&sel.texts[line], text_col) })
+    Some(crate::selection::Point {
+        row: line,
+        chr: char_at_col(&sel.texts[line], text_col),
+        side: None,
+    })
 }
 
 /// The painted surface's line texts, for extraction at a drag's release.
@@ -1800,6 +2018,75 @@ fn truncate_width(s: &str, max: usize) -> String {
     out
 }
 
+fn split_cell(
+    row: Option<(usize, usize)>,
+    app: &App,
+    side: Rect,
+    gutter: usize,
+    old: bool,
+) -> String {
+    let Some((index, seg)) = row else {
+        return " ".repeat(side.width as usize);
+    };
+    let source = &app.visible[index];
+    if matches!(source, Row::Fold { .. }) {
+        return String::new();
+    }
+    let code_w = (side.width as usize).saturating_sub(gutter).max(1);
+    let no = if old { source.old_no() } else { source.new_no() }.unwrap_or(0);
+    let prefix = if seg == 0 {
+        format!("{}{:>w$} ", source.marker(), no, w = gutter.saturating_sub(2))
+    } else {
+        " ".repeat(gutter)
+    };
+    let cells = code_cells(source, false, &[]);
+    let (start, end) = seg_cell_range(app, &cells, seg, code_w);
+    format!(
+        "{prefix}{:<width$}",
+        cells[start..end].iter().map(|c| c.ch).collect::<String>(),
+        width = code_w
+    )
+}
+
+fn render_split_diff(frame: &mut Frame, app: &App, inner: Rect) {
+    let g = split_geometry(inner);
+    let slots = read_layout(app, inner);
+    app.note_painted_slots(slots.clone());
+    let p = app.palette();
+    let lines: Vec<Line> = slots
+        .into_iter()
+        .map(|slot| match slot {
+            Slot::SplitCode { old, new } => {
+                if old.or(new).is_some_and(|(i, _)| matches!(app.visible[i], Row::Fold { .. })) {
+                    Line::from(format!(
+                        "{:<width$}",
+                        format!(
+                            "⋯ {} unmodified lines",
+                            app.visible[old.or(new).unwrap().0].hidden()
+                        ),
+                        width = inner.width as usize
+                    ))
+                } else {
+                    Line::from(format!(
+                        "{}│{}",
+                        split_cell(old, app, g.left, g.gutter, true),
+                        split_cell(new, app, g.right, g.gutter, false)
+                    ))
+                }
+            }
+            Slot::Card { comment, line } => app
+                .store
+                .get(comment)
+                .and_then(|card| {
+                    comment_card_lines(card, inner.width as usize, p).get(line).cloned()
+                })
+                .unwrap_or_default(),
+            Slot::Code { .. } | Slot::Composer => Line::default(),
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
 fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
     let p = app.palette();
     let mut title = match (&app.diff_path, &app.diff.previous_path) {
@@ -1873,6 +2160,10 @@ fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    if split_active(app, width) {
+        render_split_diff(frame, app, inner);
+        return;
+    }
     let gutter_w = gutter_for(&app.diff);
     let expand_hint = app.keymap().hint(crate::keymap::Action::Expand).label();
     let layout = RowLayout {
@@ -1941,7 +2232,7 @@ fn render_diff_view(frame: &mut Frame, app: &App, area: Rect) {
                 }
                 card_cache.as_ref().and_then(|(_, l)| l.get(line).cloned()).unwrap_or_default()
             }
-            Slot::Composer => Line::default(),
+            Slot::SplitCode { .. } | Slot::Composer => Line::default(),
         }
     };
 
@@ -4479,15 +4770,18 @@ fn pr_read_content(app: &App, inner: Rect) -> PrReadContent {
     if let Some(cm) = selected {
         // The finding's range paints as Diff-view rows; conversation messages remain markdown.
         snippet = push_finding_quote(&mut lines, app, cm, width, p);
-        for (index, message) in cm.messages.iter().enumerate() {
+        let messages = std::iter::once((cm.author.as_str(), cm.body.as_str())).chain(
+            cm.messages
+                .iter()
+                .skip(1)
+                .map(|message| (message.author.as_str(), message.body.as_str())),
+        );
+        for (index, (author, body)) in messages.enumerate() {
             if index > 0 || !lines.is_empty() {
                 lines.push(Line::raw(""));
             }
-            lines.push(Line::from(Span::styled(
-                format!("@{}", message.author),
-                Style::default().fg(p.dim2),
-            )));
-            let mut rendered = app.markdown_render(&message.body, width.max(1));
+            lines.push(Line::from(Span::styled(format!("@{author}"), Style::default().fg(p.dim2))));
+            let mut rendered = app.markdown_render(body, width.max(1));
             if index == 0 {
                 body_meta = Some((lines.len(), rendered.clone()));
             }

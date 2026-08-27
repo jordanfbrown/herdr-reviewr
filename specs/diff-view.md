@@ -14,6 +14,8 @@ The viewer shows a `FileDiff`. The `FileDiff` is the selected file as a list of 
 
 The Diff view (`Changes`) shows old versus new. That view has change rows and folds. The File view (`All files`) shows the full current file as `context` rows. A PR finding snippet (`pr-tab.md`) uses the same content-row show. That snippet is not a FileDiff.
 
+In `side-by-side`, a logical row has optional old and new cells: context occupies both, deletions only old, insertions only new, and paired replacements one logical row. Folds span both cells. Unified rendering flattens the same structured model as deletion then insertion, preserving its behavior. The split needs 48 inner cells (two 7-cell gutters, divider, and 33 useful code cells); narrower panes temporarily use unified. Wrap height is the maximum of both cells, with blank continuation cells on the shorter side. Both cells share horizontal scroll. Selection, copy, gutter comments, and text drags lock to their starting side and cannot cross the divider or blank cell. Cards are full-width beneath their logical row to preserve alignment and legibility.
+
 What the reviewer sees (unified view, a renamed TypeScript file):
 
 ```

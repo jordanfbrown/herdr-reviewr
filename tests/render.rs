@@ -299,6 +299,74 @@ fn edited_app() -> App {
 }
 
 #[test]
+fn side_by_side_aligns_changes_wraps_and_restores_after_narrow_fallback() {
+    let r = Repo::init();
+    r.write("rename.rs", "context\nold only text\nshort\n");
+    r.commit_all("init");
+    r.write("rename.rs", "context\nnew only text\na deliberately much longer replacement line that wraps on the right\n");
+    let mut app = app_on(&r);
+    app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;
+    let wide = dump(&render_size(&app, 140, 20));
+    assert!(
+        wide.contains("context")
+            && wide.contains("old only text")
+            && wide.contains("new only text"),
+        "both aligned sides paint: {wide}"
+    );
+    let narrow = dump(&render_size(&app, 50, 20));
+    let narrow_inner = ui::read_inner_rect(Rect::new(0, 0, 50, 20), &app);
+    assert!(
+        ui::split_side_at(&app, narrow_inner, narrow_inner.x + 1).is_none(),
+        "narrow width falls back to unified without changing preference: {narrow}"
+    );
+    let restored = dump(&render_size(&app, 140, 20));
+    assert!(restored.contains('│'), "a wider pane restores the requested split layout: {restored}");
+}
+
+#[test]
+fn side_by_side_keeps_comment_cards_full_width_under_their_aligned_row() {
+    let mut app = edited_app();
+    app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;
+    composing(&mut app);
+    for ch in "split card".chars() {
+        app.input_push(ch);
+    }
+    app.submit_comment();
+
+    let out = dump(&render_size(&app, 140, 20));
+    assert!(out.contains("split card"), "the card remains visible in split layout: {out}");
+    assert!(out.contains("╭─ comment"), "the card spans the full read pane: {out}");
+}
+
+#[test]
+fn side_by_side_uses_shared_horizontal_scroll_and_side_hits() {
+    let r = Repo::init();
+    r.write("a.rs", "prefix OLDTAIL\n");
+    r.commit_all("init");
+    r.write("a.rs", "prefix NEWTAIL\n");
+    let mut app = app_on(&r);
+    app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;
+    app.wrap = false;
+    let before = dump(&render_size(&app, 140, 20));
+    app.h_scroll = 7;
+    let after = dump(&render_size(&app, 140, 20));
+    assert!(
+        before.contains("prefix") && !after.contains("prefix"),
+        "one shared h-scroll shifts both sides"
+    );
+    let area = Rect::new(0, 0, 140, 20);
+    let inner = ui::read_inner_rect(area, &app);
+    let left = ui::read_point_at(area, &app, inner.x + 8, inner.y).unwrap();
+    let right = ui::read_point_at(area, &app, inner.x + inner.width / 2 + 8, inner.y).unwrap();
+    assert_eq!(left.side, Some(herdr_reviewr::model::Side::Old));
+    assert_eq!(right.side, Some(herdr_reviewr::model::Side::New));
+    assert!(
+        ui::read_point_at(area, &app, inner.x + inner.width / 2, inner.y).is_none(),
+        "divider is inert"
+    );
+}
+
+#[test]
 fn the_file_list_renders_as_a_directory_tree() {
     let r = Repo::init();
     r.write("src/app.rs", "x\n");
@@ -1735,6 +1803,7 @@ fn pr_navigator_scroll_is_independent_and_preserved() {
         .collect();
     let comments: Vec<Comment> = (0..8)
         .map(|i| Comment {
+            id: format!("comment-{i:02}"),
             author: format!("author-{i:02}"),
             body: (0..50).map(|line| format!("line-{line:02}")).collect::<Vec<_>>().join("  \n"),
             ..common::comment()
@@ -3568,8 +3637,8 @@ fn the_text_selection_highlights_the_dragged_span() {
     app.gesture = herdr_reviewr::selection::Gesture::Text {
         drag: TextDrag {
             surface: Surface::Read,
-            anchor: Point { row: 0, chr: 6 },
-            extent: Point { row: 2, chr: 1 },
+            anchor: Point { row: 0, chr: 6, side: None },
+            extent: Point { row: 2, chr: 1, side: None },
         },
         count: 1,
     };

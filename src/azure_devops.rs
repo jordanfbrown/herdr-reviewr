@@ -702,7 +702,7 @@ fn merge_comments(threads: &[&Value], pr: &Value) -> Vec<Comment> {
         // The vote carries no timestamp, so votes sort after the dated rows in the
         // newest-first list.
         let id = format!("vote:{}", reviewer["id"].as_str().unwrap_or(&author));
-        out.push(prose_row(CommentKind::Review, author, bot, body.to_string(), String::new(), id));
+        out.push(prose_row(CommentKind::Review, author, bot, body.to_string(), String::new(), &id));
     }
     finish_comments(&mut out);
     out

@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use common::{Repo, app_on};
 use herdr_reviewr::app::{App, Focus, FooterAction, Mode, Tab};
+use herdr_reviewr::forge::{CommentKind, PrSnapshot, PrView, ThreadMessage};
 use herdr_reviewr::keymap::Keymap;
 use herdr_reviewr::ui;
 use herdr_reviewr::{handle_key, handle_mouse};
@@ -273,8 +274,6 @@ fn pr_send_freezes_the_selected_conversation_across_routing() {
         );
         return;
     }
-
-    use herdr_reviewr::forge::{CommentKind, PrSnapshot, PrView, ThreadMessage};
 
     let r = Repo::init();
     r.write("a.rs", "alpha\n");

@@ -690,7 +690,7 @@ fn merge_comments(discussions: &[Value], approvals: &Value) -> Vec<Comment> {
             bot,
             "Approved this merge request.".to_string(),
             String::new(),
-            id,
+            &id,
         ));
     }
     finish_comments(&mut out);
