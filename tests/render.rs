@@ -347,6 +347,46 @@ fn side_by_side_preserves_syntax_foregrounds() {
 }
 
 #[test]
+fn side_by_side_tints_changed_cells_across_their_full_width() {
+    let r = Repo::init();
+    r.write("tint.rs", "let value = OLD_TINT;\n");
+    r.commit_all("init");
+    r.write("tint.rs", "let value = NEW_TINT;\n");
+    let mut app = app_on(&r);
+    app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;
+    app.focus = Focus::Files;
+
+    let old_bg = app.palette().del_bg;
+    let new_bg = app.palette().ins_bg;
+    let buf = render_buffer(&app);
+    let old_y = (0..buf.area.height).find(|&y| {
+        (0..buf.area.width)
+            .any(|x| buf.cell((x, y)).is_some_and(|cell| cell.symbol() == "O" && cell.bg == old_bg))
+    });
+    let new_y = (0..buf.area.height).find(|&y| {
+        (0..buf.area.width)
+            .any(|x| buf.cell((x, y)).is_some_and(|cell| cell.symbol() == "N" && cell.bg == new_bg))
+    });
+
+    assert_eq!(old_y, new_y, "paired replacement cells share one logical split row");
+    let y = old_y.expect("the deletion cell carries the red fill");
+    assert!(
+        (0..buf.area.width)
+            .filter(|&x| buf.cell((x, y)).is_some_and(|cell| cell.bg == old_bg))
+            .count()
+            > 20,
+        "the deletion fill extends through the old cell's padding"
+    );
+    assert!(
+        (0..buf.area.width)
+            .filter(|&x| buf.cell((x, y)).is_some_and(|cell| cell.bg == new_bg))
+            .count()
+            > 20,
+        "the insertion fill extends through the new cell's padding"
+    );
+}
+
+#[test]
 fn side_by_side_keeps_comment_cards_full_width_under_their_aligned_row() {
     let mut app = edited_app();
     app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;

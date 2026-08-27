@@ -2051,6 +2051,16 @@ fn split_cell(
     if painted < code_w {
         spans.push(Span::raw(" ".repeat(code_w - painted)));
     }
+    let background = match source.marker() {
+        '-' => Some(app.palette().del_bg),
+        '+' => Some(app.palette().ins_bg),
+        _ => None,
+    };
+    if let Some(background) = background {
+        for span in &mut spans {
+            span.style = span.style.bg(background);
+        }
+    }
     spans
 }
 
