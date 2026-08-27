@@ -17,6 +17,7 @@ the terminal.
 One persistent pane, pointed at a git worktree:
 
 - **Diff review** — the agent's changed files, syntax-highlighted.
+- **Side-by-side diffs** — old on the left, new on the right, with unified view still the default.
 - **Four diff scopes** — uncommitted, branch, last turn, commits.
 - **Last-turn diff** — what the worktree's latest turn changed, on its own.
 - **Line comments** — comment on a line or a range. Then send it to the agent.
@@ -24,12 +25,12 @@ One persistent pane, pointed at a git worktree:
 - **File viewer** — any file's current content from the whole worktree.
 - **Search** — fuzzy file names and live code grep across the worktree, powered by [fff](https://github.com/dmtrKovalenko/fff).
 - **Find in file** — search the open file and step between every match.
-- **PR view** — the branch's pull request in the pane, read-only.
+- **PR view** — complete review conversations from the branch's pull request, with one-key send to an agent.
 - **Markdown preview** — flip a `.md` file between source and rendered view.
 - **Themes** — 18 palettes in dark and light.
 
 It never edits your worktree and sends nothing on its own. The **PR** tab reads GitHub,
-GitLab, or Azure DevOps and never posts.
+GitLab, or Azure DevOps and never posts; `s` copies the selected conversation into a Herdr agent's input.
 
 ## Requirements
 
@@ -119,6 +120,7 @@ The keys below are defaults. You can rebind every action, even to several keys a
 | `/` | Search files and code |
 | `Ctrl+F` | Find in file |
 | `w` | Toggle line wrap |
+| `D` | Toggle unified / side-by-side diff layout |
 | `m` | Preview markdown file |
 | `p` | Rotate navigator |
 | `z` | Hide / show navigator |
@@ -137,7 +139,7 @@ The keys below are defaults. You can rebind every action, even to several keys a
 | `d` | Delete comment |
 | `n` `N` | Jump to next / previous comment |
 | `l` | List all comments |
-| `s` | Send comments to agent |
+| `s` | Send comments to agent; on PR, send the selected conversation |
 | `y` | Copy comments to clipboard |
 | `esc` | Clear selection |
 
@@ -158,6 +160,7 @@ jumps, and `Ctrl+W` / `Ctrl+U` / `Ctrl+K` deletes.
 | --- | --- |
 | `j` `k` | Move through description and comments |
 | `PageUp` `PageDown` | Scroll focused pane |
+| `s` | Send the selected review, comment, or finding to a Herdr agent |
 | `o` | Open PR in browser |
 | `r` | Refresh |
 
@@ -171,8 +174,8 @@ links, and scroll with the wheel.
 - **All files** — any file's current content from the whole worktree, comments too. Ignored
   paths show dimmed.
 - **PR** — a read-only mirror of the branch's pull request (GitHub, Azure DevOps) or merge
-  request (GitLab): state, checks, description, and comments, rendered as markdown. reviewr
-  never writes to the forge.
+  request (GitLab): state, checks, description, and complete comment conversations, rendered as
+  markdown. `s` sends the selected conversation to an agent; reviewr never writes to the forge.
 
 ## Diff scopes
 
@@ -218,6 +221,7 @@ The file accepts these keys:
 theme = "tokyo-night"
 default_scope = "branch"
 navigator_position = "right"
+diff_layout = "unified"
 toggle_placement = "overlay"
 toggle_direction = "down"
 auto_open = false
@@ -260,6 +264,10 @@ navigator_position = "bottom"
 
 `<` grows, `>` shrinks, or drag the divider. `z` hides the navigator altogether and brings it
 back.
+
+### Diff layout
+
+Unified view is the default. Set `diff_layout = "side-by-side"` or press `D` on the **Changes** source view to put old content on the left and new content on the right. Panes narrower than 48 inner columns fall back to unified without changing the preference; widening restores the split.
 
 ### Base branch
 

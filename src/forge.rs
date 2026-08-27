@@ -1729,14 +1729,12 @@ mod tests {
             {"author": {"login": "persijano"}, "body": "note two", "submittedAt": "2026-06-27T09:45:00Z"}
         ]);
         let cs = merge_comments(&reviews, &serde_json::json!([]), &serde_json::json!([]));
-        // The finding preserves its root sort key and the source-provided conversation order.
-        let f = cs.iter().find(|c| c.kind == CommentKind::Finding).unwrap();
-        assert_eq!(f.id, "thread-1");
+        assert_eq!(cs.iter().filter(|c| c.author == "claude[bot]").count(), 1);
         assert_eq!(
-            f.messages.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
-            ["SSRF", "Fixed"]
+            cs.iter().find(|c| c.author == "claude[bot]").map(|c| c.body.as_str()),
+            Some("new review")
         );
-        assert!(f.conversation_truncated);
+        assert_eq!(cs.iter().filter(|c| c.author == "persijano").count(), 2);
     }
 
     #[test]

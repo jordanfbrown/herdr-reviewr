@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Complete PR conversations.** GitHub, GitLab, and Azure DevOps review threads now show every fetched reply in order. A `+more` marker links to the forge when a thread exceeds the provider limit.
+- **Send selected PR feedback.** On a selected review, comment, or inline finding, `s` sends one frozen conversation to a Herdr agent without changing the forge or authored comments.
+- **Side-by-side diff layout.** Set `diff_layout = "side-by-side"` or press `D` on the **Changes** source view to show old content on the left and new content on the right. Narrow panes fall back to unified and restore the split when widened.
+
+### Changed
+- **Breaking: `D` is a new default key.** A `[keybindings]` config that already uses `D` now collides and must move it or rebind `diff-layout`.
+
 ## [0.36.0] — 2026-08-23
 
 ### Added
