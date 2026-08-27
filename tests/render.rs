@@ -324,6 +324,29 @@ fn side_by_side_aligns_changes_wraps_and_restores_after_narrow_fallback() {
 }
 
 #[test]
+fn side_by_side_preserves_syntax_foregrounds() {
+    let r = Repo::init();
+    r.write("highlight.rs", "fn before() {}\n");
+    r.commit_all("init");
+    r.write("highlight.rs", "fn before() {}\nlet split_highlight = 1;\n");
+    let mut app = app_on(&r);
+    app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;
+    app.focus = Focus::Files;
+
+    let row = app.visible.iter().find(|row| row.text().contains("split_highlight")).unwrap();
+    let keyword = row.spans().iter().find(|span| span.text.contains("let")).unwrap();
+    let expected = ratatui::style::Color::Rgb(keyword.color.0, keyword.color.1, keyword.color.2);
+    let buf = render_buffer(&app);
+
+    let highlighted = (0..buf.area.height)
+        .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+        .any(|(x, y)| {
+            buf.cell((x, y)).is_some_and(|cell| cell.symbol() == "l" && cell.fg == expected)
+        });
+    assert!(highlighted, "split code keeps the syntax foreground from its structured row");
+}
+
+#[test]
 fn side_by_side_keeps_comment_cards_full_width_under_their_aligned_row() {
     let mut app = edited_app();
     app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;

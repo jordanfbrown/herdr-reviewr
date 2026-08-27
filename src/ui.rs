@@ -2024,13 +2024,13 @@ fn split_cell(
     side: Rect,
     gutter: usize,
     old: bool,
-) -> String {
+) -> Vec<Span<'static>> {
     let Some((index, seg)) = row else {
-        return " ".repeat(side.width as usize);
+        return vec![Span::raw(" ".repeat(side.width as usize))];
     };
     let source = &app.visible[index];
     if matches!(source, Row::Fold { .. }) {
-        return String::new();
+        return Vec::new();
     }
     let code_w = (side.width as usize).saturating_sub(gutter).max(1);
     let no = if old { source.old_no() } else { source.new_no() }.unwrap_or(0);
@@ -2041,11 +2041,17 @@ fn split_cell(
     };
     let cells = code_cells(source, false, &[]);
     let (start, end) = seg_cell_range(app, &cells, seg, code_w);
-    format!(
-        "{prefix}{:<width$}",
-        cells[start..end].iter().map(|c| c.ch).collect::<String>(),
-        width = code_w
-    )
+    let mut spans = vec![Span::raw(prefix)];
+    spans.extend(cells_to_spans(
+        &cells[start..end],
+        app.palette().ins_bg,
+        HlStyle { bg: app.palette().yellow, fg: app.palette().surface0 },
+    ));
+    let painted = cells[start..end].iter().map(|cell| cell.w).sum::<usize>();
+    if painted < code_w {
+        spans.push(Span::raw(" ".repeat(code_w - painted)));
+    }
+    spans
 }
 
 fn render_split_diff(frame: &mut Frame, app: &App, inner: Rect) {
@@ -2067,11 +2073,10 @@ fn render_split_diff(frame: &mut Frame, app: &App, inner: Rect) {
                         width = inner.width as usize
                     ))
                 } else {
-                    Line::from(format!(
-                        "{}│{}",
-                        split_cell(old, app, g.left, g.gutter, true),
-                        split_cell(new, app, g.right, g.gutter, false)
-                    ))
+                    let mut spans = split_cell(old, app, g.left, g.gutter, true);
+                    spans.push(Span::raw("│"));
+                    spans.extend(split_cell(new, app, g.right, g.gutter, false));
+                    Line::from(spans)
                 }
             }
             Slot::Card { comment, line } => app
