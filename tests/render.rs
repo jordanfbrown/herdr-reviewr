@@ -357,6 +357,31 @@ fn side_by_side_scroll_uses_logical_rows() {
 }
 
 #[test]
+fn side_by_side_paints_the_logical_cursor_after_keyboard_movement() {
+    let r = Repo::init();
+    r.write("cursor.rs", "old zero\nold one\n");
+    r.commit_all("init");
+    r.write("cursor.rs", "new zero\nnew one\n");
+    let mut app = app_on(&r);
+    app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;
+    app.focus = Focus::Diff;
+    let cursor_row = |buf: &Buffer| {
+        (0..buf.area.height).find(|&y| {
+            (1..139u16)
+                .filter(|&x| buf.cell((x, y)).is_some_and(|cell| cell.bg == SELECTION_BG))
+                .count()
+                > 70
+        })
+    };
+    let before = render_size(&app, 140, 20);
+    let first = cursor_row(&before).expect("the initial aligned cursor paints");
+    app.move_cursor(1).unwrap();
+    let after = render_size(&app, 140, 20);
+    let second = cursor_row(&after).expect("the moved aligned cursor paints");
+    assert!(second > first, "the cursor paint moves down: {first} -> {second}");
+}
+
+#[test]
 fn side_by_side_renders_the_comment_composer() {
     let mut app = edited_app();
     app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;
@@ -401,9 +426,9 @@ fn side_by_side_preserves_syntax_foregrounds() {
 #[test]
 fn side_by_side_tints_changed_cells_across_their_full_width() {
     let r = Repo::init();
-    r.write("tint.rs", "let value = OLD_TINT;\n");
+    r.write("tint.rs", "stable context\nlet value = OLD_TINT;\n");
     r.commit_all("init");
-    r.write("tint.rs", "let value = NEW_TINT;\n");
+    r.write("tint.rs", "stable context\nlet value = NEW_TINT;\n");
     let mut app = app_on(&r);
     app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;
     app.focus = Focus::Files;

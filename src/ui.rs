@@ -304,7 +304,12 @@ pub fn diff_viewport_height(area: Rect, app: &App) -> usize {
 /// The display height (rows on screen) of each visible logical diff row, honoring wrap.
 #[must_use]
 pub fn diff_row_heights(app: &App, area: Rect) -> Vec<usize> {
-    let width = inner_rect(panes(area, app).diff).width as usize;
+    let inner = inner_rect(panes(area, app).diff);
+    let width = inner.width as usize;
+
+    if split_active(app, width) {
+        return split_row_slots(app, inner).into_iter().map(|slots| slots.len()).collect();
+    }
 
     let gutter_w = gutter_for(&app.diff);
     let p = app.palette();
@@ -460,30 +465,15 @@ fn read_layout(app: &App, inner: Rect) -> Vec<Slot> {
     let rows = app.visible.len();
     if split_active(app, width) {
         let groups = split_row_slots(app, inner);
-        let source_rows = |slots: &[Slot]| -> Vec<usize> {
-            slots
-                .iter()
-                .flat_map(|slot| match slot {
-                    Slot::SplitCode { old, new } => {
-                        [old.map(|(row, _)| row), new.map(|(row, _)| row)]
-                    }
-                    Slot::Card { .. } | Slot::Code { .. } | Slot::Composer => [None, None],
-                })
-                .flatten()
-                .collect()
-        };
-        let start = groups
-            .iter()
-            .position(|slots| source_rows(slots).contains(&app.diff_scroll))
-            .unwrap_or(groups.len());
+        let start = app.diff_scroll.min(groups.len());
         if !app.composing() {
             let body_h = if app.mode == Mode::Find { height.saturating_sub(1) } else { height };
             return groups.into_iter().skip(start).flatten().take(body_h).collect();
         }
 
-        let (anchor, box_h, diff_budget) = composing_split(app, height, width);
-        let anchor_group =
-            groups.iter().position(|slots| source_rows(slots).contains(&anchor)).unwrap_or(start);
+        let (_, box_h, diff_budget) = composing_split(app, height, width);
+        let (_, selection_end) = app.selection_range();
+        let anchor_group = selection_end.max(start).min(groups.len().saturating_sub(1));
         let above =
             tail(groups[start..=anchor_group].iter().flatten().copied().collect(), diff_budget);
         let remaining = diff_budget - above.len();
@@ -2101,12 +2091,13 @@ fn render_split_diff(frame: &mut Frame, app: &App, inner: Rect) {
     let p = app.palette();
     let line_for = |slot: &Slot| match *slot {
         Slot::SplitCode { old, new } => {
-            if old.or(new).is_some_and(|(i, _)| matches!(app.visible[i], Row::Fold { .. })) {
+            let source = old.or(new).map(|(i, _)| i);
+            if source.is_some_and(|i| matches!(app.visible[i], Row::Fold { .. })) {
                 Line::from(format!(
                     "{:<width$}",
                     format!(
                         "⋯ {} unmodified lines",
-                        app.visible[old.or(new).expect("fold slot has a source").0].hidden()
+                        app.visible[source.expect("fold slot has a source")].hidden()
                     ),
                     width = inner.width as usize
                 ))
@@ -2114,6 +2105,12 @@ fn render_split_diff(frame: &mut Frame, app: &App, inner: Rect) {
                 let mut spans = split_cell(old, app, g.left, g.gutter, true);
                 spans.push(Span::raw("│"));
                 spans.extend(split_cell(new, app, g.right, g.gutter, false));
+                if source.is_some_and(|i| app.split_cursor_contains_source(i)) {
+                    let background = p.cursor_bg(app.focus == Focus::Diff);
+                    for span in &mut spans {
+                        span.style = span.style.bg(background);
+                    }
+                }
                 Line::from(spans)
             }
         }

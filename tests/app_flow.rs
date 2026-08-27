@@ -348,6 +348,27 @@ fn an_armed_crossing_takes_the_footer_and_dies_on_any_other_input() {
 }
 
 #[test]
+fn side_by_side_changes_moves_the_logical_line_with_arrows_and_jk() {
+    let r = edited_repo();
+    let mut app = app_on(&r);
+    let keymap = Keymap::default();
+    app.diff_layout = herdr_reviewr::config::DiffLayout::SideBySide;
+    app.note_diff_width(80);
+    app.focus = Focus::Diff;
+
+    let start = app.diff_cursor;
+    press(&mut app, &keymap, KeyCode::Down);
+    assert_eq!(app.diff_cursor, start + 1, "down moves one aligned row");
+    press(&mut app, &keymap, KeyCode::Char('j'));
+    assert_eq!(app.diff_cursor, start + 2, "j moves one aligned row");
+    press(&mut app, &keymap, KeyCode::Up);
+    assert_eq!(app.diff_cursor, start + 1, "up moves one aligned row");
+    press(&mut app, &keymap, KeyCode::Char('k'));
+    assert_eq!(app.diff_cursor, start, "k moves one aligned row");
+    assert!(app.reveal_diff, "keyboard movement requests viewport reveal");
+}
+
+#[test]
 fn a_resting_pointer_keeps_the_arm_but_a_gesture_drops_it() {
     let r = traversal_repo();
     let mut app = app_on(&r);

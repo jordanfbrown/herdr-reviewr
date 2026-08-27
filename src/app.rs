@@ -1620,6 +1620,13 @@ impl App {
     }
 
     #[must_use]
+    pub fn split_cursor_contains_source(&self, source: usize) -> bool {
+        self.visible_aligned
+            .get(self.diff_cursor)
+            .is_some_and(|row| row.old_index == Some(source) || row.new_index == Some(source))
+    }
+
+    #[must_use]
     pub fn split_row(&self, logical: usize, side: Side) -> Option<&Row> {
         let row = self.visible_aligned.get(logical)?;
         match side {
