@@ -139,8 +139,9 @@ pub fn pr_snapshot() -> herdr_reviewr::forge::PrSnapshot {
 /// A minimal PR conversation comment. Tests override the fields they exercise:
 /// `Comment { body: "...".into(), ..common::comment() }`.
 pub fn comment() -> herdr_reviewr::forge::Comment {
-    use herdr_reviewr::forge::{Comment, CommentKind};
+    use herdr_reviewr::forge::{Comment, CommentKind, ThreadMessage};
     Comment {
+        id: "comment-1".into(),
         kind: CommentKind::Comment,
         author: "ann".into(),
         author_is_bot: false,
@@ -149,9 +150,15 @@ pub fn comment() -> herdr_reviewr::forge::Comment {
         body: "b".into(),
         snippet: None,
         created_at: "2026-06-27T10:00:00Z".into(),
+        messages: vec![ThreadMessage {
+            author: "ann".into(),
+            author_is_bot: false,
+            body: "b".into(),
+            created_at: "2026-06-27T10:00:00Z".into(),
+        }],
+        conversation_truncated: false,
         is_resolved: false,
         is_outdated: false,
-        reply_count: 0,
     }
 }
 

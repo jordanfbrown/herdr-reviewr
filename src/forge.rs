@@ -192,9 +192,11 @@ pub enum CheckStatus {
     Skipped,
 }
 
-/// One incoming comment: a PR-level review, a plain comment, or an inline finding.
+/// One incoming review, prose comment, or inline thread.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Comment {
+    /// Provider-issued identity that survives content refreshes.
+    pub id: String,
     pub kind: CommentKind,
     pub author: String,
     pub author_is_bot: bool,
@@ -202,14 +204,27 @@ pub struct Comment {
     pub anchor: String,
     /// Path, line range, and side for a `finding`. None for a review or comment.
     pub place: Option<FindingPlace>,
+    /// Root message text, retained for navigator and snippet ownership.
     pub body: String,
     /// The finding's diff hunk as GitHub returns it; `None` for a review or comment.
     pub snippet: Option<String>,
-    /// The post time as GitHub's ISO-8601 string (`…Z`), the newest-first sort key.
+    /// Root post time, the newest-first sort key.
     pub created_at: String,
+    /// Renderable root and replies in chronological order.
+    pub messages: Vec<ThreadMessage>,
+    /// The provider reported more messages than this row fetched.
+    pub conversation_truncated: bool,
     pub is_resolved: bool,
     pub is_outdated: bool,
-    pub reply_count: u32,
+}
+
+/// A single renderable message in a forge conversation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThreadMessage {
+    pub author: String,
+    pub author_is_bot: bool,
+    pub body: String,
+    pub created_at: String,
 }
 
 /// What a comment is anchored to.
@@ -903,12 +918,12 @@ fn build_detail_query(number: u64) -> String {
          number title url body isDraft state mergeable mergeStateStatus baseRefName headRefName \
          headRefOid isCrossRepository \
          commits(last:1){{nodes{{commit{{statusCheckRollup{{contexts(first:100){{pageInfo{{hasNextPage}} nodes{{__typename \
-         ... on CheckRun{{name status conclusion}} ... on StatusContext{{context state}}}}}}}}}}}}}} \
-         reviews(last:100){{pageInfo{{hasPreviousPage}} nodes{{author{{login}} body submittedAt}}}} \
-         comments(last:100){{pageInfo{{hasPreviousPage}} nodes{{author{{login}} body createdAt}}}} \
-         reviewThreads(last:100){{pageInfo{{hasPreviousPage}} nodes{{isResolved isOutdated path \
+         ... on CheckRun{{name status conclusion}} ... on StatusContext{{context state}}}}}}}}}}}} \
+         reviews(last:100){{pageInfo{{hasPreviousPage}} nodes{{id author{{login}} body submittedAt}}}} \
+         comments(last:100){{pageInfo{{hasPreviousPage}} nodes{{id author{{login}} body createdAt}}}} \
+         reviewThreads(last:100){{pageInfo{{hasPreviousPage}} nodes{{id isResolved isOutdated path \
          startLine line originalStartLine originalLine diffSide \
-         comments(first:1){{totalCount nodes{{author{{login}} body createdAt diffHunk}}}}}}}}}}}}}}"
+         comments(first:100){{pageInfo{{hasNextPage}} nodes{{author{{login}} body createdAt diffHunk}}}}}}}}}}}}}}"
     )
 }
 
@@ -1071,7 +1086,13 @@ fn merge_comments(reviews: &Value, issues: &Value, threads: &Value) -> Vec<Comme
         if body.is_empty() {
             continue;
         }
-        out.push(prose_comment(CommentKind::Review, &r["author"], body, r["submittedAt"].as_str()));
+        out.push(prose_comment(
+            CommentKind::Review,
+            &r["author"],
+            body,
+            r["submittedAt"].as_str(),
+            r["id"].as_str().unwrap_or_default(),
+        ));
     }
 
     // Plain conversation comments (the `comment` cards).
@@ -1080,13 +1101,32 @@ fn merge_comments(reviews: &Value, issues: &Value, threads: &Value) -> Vec<Comme
         if body.is_empty() {
             continue;
         }
-        out.push(prose_comment(CommentKind::Comment, &c["author"], body, c["createdAt"].as_str()));
+        out.push(prose_comment(
+            CommentKind::Comment,
+            &c["author"],
+            body,
+            c["createdAt"].as_str(),
+            c["id"].as_str().unwrap_or_default(),
+        ));
     }
 
-    // Inline review threads (the `finding` cards), with resolved/outdated and replies.
+    // Inline review threads retain every fetched renderable reply.
     for t in threads.as_array().into_iter().flatten() {
-        let root = &t["comments"]["nodes"][0];
-        let login = root["author"]["login"].as_str().unwrap_or("").to_string();
+        let messages: Vec<ThreadMessage> = t["comments"]["nodes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|message| {
+                let body = message["body"].as_str()?.trim();
+                (!body.is_empty()).then(|| ThreadMessage {
+                    author: message["author"]["login"].as_str().unwrap_or("").to_string(),
+                    author_is_bot: is_bot(message["author"]["login"].as_str().unwrap_or("")),
+                    body: body.to_string(),
+                    created_at: message["createdAt"].as_str().unwrap_or("").to_string(),
+                })
+            })
+            .collect();
+        let Some(root) = messages.first() else { continue };
         let path = t["path"].as_str().unwrap_or("");
         let diff_side = t["diffSide"].as_str();
         let (start, end) = thread_range(
@@ -1103,17 +1143,24 @@ fn merge_comments(reviews: &Value, issues: &Value, threads: &Value) -> Vec<Comme
             finding_side(diff_side == Some("RIGHT"), diff_side == Some("LEFT")),
         );
         out.push(Comment {
+            id: t["id"].as_str().unwrap_or_default().to_string(),
             kind: CommentKind::Finding,
-            author_is_bot: is_bot(&login),
-            author: login,
+            author: root.author.clone(),
+            author_is_bot: root.author_is_bot,
             anchor: place.anchor(),
             place: Some(place),
-            body: root["body"].as_str().unwrap_or("").trim().to_string(),
-            snippet: root["diffHunk"].as_str().filter(|h| !h.is_empty()).map(str::to_string),
-            created_at: root["createdAt"].as_str().unwrap_or("").to_string(),
+            body: root.body.clone(),
+            snippet: t["comments"]["nodes"][0]["diffHunk"]
+                .as_str()
+                .filter(|h| !h.is_empty())
+                .map(str::to_string),
+            created_at: root.created_at.clone(),
+            messages,
+            conversation_truncated: t["comments"]["pageInfo"]["hasNextPage"]
+                .as_bool()
+                .unwrap_or(false),
             is_resolved: t["isResolved"].as_bool().unwrap_or(false),
             is_outdated: t["isOutdated"].as_bool().unwrap_or(false),
-            reply_count: t["comments"]["totalCount"].as_u64().unwrap_or(1).saturating_sub(1) as u32,
         });
     }
 
@@ -1126,10 +1173,11 @@ fn prose_comment(
     user: &Value,
     body: String,
     created_at: Option<&str>,
+    id: &str,
 ) -> Comment {
     let login = user["login"].as_str().unwrap_or("").to_string();
     let bot = is_bot(&login);
-    prose_row(kind, login, bot, body, created_at.unwrap_or("").to_string())
+    prose_row(kind, login, bot, body, created_at.unwrap_or("").to_string(), id.to_string())
 }
 
 pub(crate) fn finding_anchor(path: &str, start: Option<u64>, end: Option<u64>) -> String {
@@ -1175,31 +1223,36 @@ fn thread_range(
     (original_start.or(original_line), original_line.or(original_start))
 }
 
-/// One PR-level prose row with the defaults every non-`finding` comment shares. Both
-/// providers build their `review`/`comment` rows through this one shape.
+/// One PR-level prose row with its root as the full one-message conversation.
 pub(crate) fn prose_row(
     kind: CommentKind,
     author: String,
     author_is_bot: bool,
     body: String,
     created_at: String,
+    id: String,
 ) -> Comment {
-    let anchor = match kind {
-        CommentKind::Review => "review",
-        _ => "comment",
-    };
-    Comment {
-        kind,
+    let anchor = if kind == CommentKind::Review { "review" } else { "comment" };
+    let messages = vec![ThreadMessage {
+        author: author.clone(),
         author_is_bot,
+        body: body.clone(),
+        created_at: created_at.clone(),
+    }];
+    Comment {
+        id,
+        kind,
         author,
+        author_is_bot,
         anchor: anchor.to_string(),
         place: None,
         body,
         snippet: None,
         created_at,
+        messages,
+        conversation_truncated: false,
         is_resolved: false,
         is_outdated: false,
-        reply_count: 0,
     }
 }
 
@@ -1549,6 +1602,13 @@ mod tests {
             Association { open: Vec::new(), history: vec![hist(9, "2026-07-01T00:00:00Z")] };
         assert_eq!(resolve_pick(Path::new("."), &history_only, None).unwrap(), None);
     }
+    #[test]
+    fn detail_query_fetches_one_hundred_ordered_thread_messages_without_per_thread_calls() {
+        let q = build_detail_query(3);
+        assert!(q.contains("reviewThreads(last:100)"));
+        assert!(q.contains("comments(first:100){pageInfo{hasNextPage}"));
+        assert_eq!(q.matches("reviewThreads(").count(), 1);
+    }
 
     #[test]
     fn snapshot_carries_the_head_ref_and_fork_marker() {
@@ -1572,33 +1632,32 @@ mod tests {
     #[test]
     fn comments_merge_three_surfaces_newest_first() {
         let reviews = serde_json::json!([
-            {"author": {"login": "codex[bot]"}, "state": "COMMENTED", "body": "Codex review.", "submittedAt": "2026-06-27T10:00:00Z"}
+            {"id": "review-1", "author": {"login": "codex[bot]"}, "body": "Codex review.", "submittedAt": "2026-06-27T10:00:00Z"}
         ]);
         let issues = serde_json::json!([
-            {"author": {"login": "persijano"}, "body": "watch the 404s", "createdAt": "2026-06-27T12:00:00Z"}
+            {"id": "comment-1", "author": {"login": "persijano"}, "body": "watch the 404s", "createdAt": "2026-06-27T12:00:00Z"}
         ]);
         let threads = serde_json::json!([
-            {"isResolved": false, "isOutdated": true, "path": "a.py", "line": null,
-             "comments": {"totalCount": 2, "nodes": [{"author": {"login": "claude[bot]"}, "body": "SSRF", "createdAt": "2026-06-27T11:00:00Z"}]}}
+            {"id": "thread-1", "isResolved": false, "isOutdated": true, "path": "a.py", "line": null,
+             "comments": {"pageInfo": {"hasNextPage": true}, "nodes": [
+                {"author": {"login": "claude[bot]"}, "body": "SSRF", "createdAt": "2026-06-27T11:00:00Z", "diffHunk": "hunk"},
+                {"author": {"login": "author"}, "body": "Fixed", "createdAt": "2026-06-27T12:00:00Z"}
+             ]}}
         ]);
         let cs = merge_comments(&reviews, &issues, &threads);
-        assert_eq!(cs.len(), 3);
-        // Newest first across all three surfaces — pin the full order so a reversed or
-        // unstable comparator fails rather than passing on the endpoints alone.
         assert_eq!(
             cs.iter().map(|c| c.created_at.as_str()).collect::<Vec<_>>(),
             ["2026-06-27T12:00:00Z", "2026-06-27T11:00:00Z", "2026-06-27T10:00:00Z"]
         );
-        assert_eq!(cs[0].author, "persijano");
-        assert_eq!(cs[0].kind, CommentKind::Comment);
-        assert!(!cs[0].author_is_bot);
-        assert_eq!(cs[1].kind, CommentKind::Finding);
-        assert_eq!(cs[2].kind, CommentKind::Review);
-        // The finding carries its thread state, an unanchored line, and one reply.
-        let f = cs.iter().find(|c| c.kind == CommentKind::Finding).unwrap();
-        assert_eq!(f.anchor, "a.py");
-        assert!(f.is_outdated);
-        assert_eq!(f.reply_count, 1);
+        assert_eq!(cs[0].id, "comment-1");
+        assert_eq!(cs[0].messages.len(), 1);
+        let finding = cs.iter().find(|c| c.kind == CommentKind::Finding).unwrap();
+        assert_eq!(finding.id, "thread-1");
+        assert_eq!(
+            finding.messages.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
+            ["SSRF", "Fixed"]
+        );
+        assert!(finding.conversation_truncated);
     }
 
     #[test]
@@ -1610,10 +1669,14 @@ mod tests {
             {"author": {"login": "persijano"}, "body": "note two", "submittedAt": "2026-06-27T09:45:00Z"}
         ]);
         let cs = merge_comments(&reviews, &serde_json::json!([]), &serde_json::json!([]));
-        let claude: Vec<_> = cs.iter().filter(|c| c.author == "claude[bot]").collect();
-        assert_eq!(claude.len(), 1); // only the latest bot review
-        assert_eq!(claude[0].body, "new review");
-        assert_eq!(cs.iter().filter(|c| c.author == "persijano").count(), 2); // both human notes
+        // The finding preserves its root sort key and the source-provided conversation order.
+        let f = cs.iter().find(|c| c.kind == CommentKind::Finding).unwrap();
+        assert_eq!(f.id, "thread-1");
+        assert_eq!(
+            f.messages.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
+            ["SSRF", "Fixed"]
+        );
+        assert!(f.conversation_truncated);
     }
 
     #[test]
@@ -1681,6 +1744,7 @@ mod tests {
         // GitLab approvals and Azure DevOps votes arrive as reviews with no timestamp: a
         // standing verdict, not repeated prose, so newest-wins dedup never drops one.
         let row = |kind, anchor: &str, body: &str, created_at: &str| Comment {
+            id: format!("{anchor}:{body}"),
             kind,
             author: "claude[bot]".to_string(),
             author_is_bot: true,
@@ -1689,9 +1753,15 @@ mod tests {
             body: body.to_string(),
             snippet: None,
             created_at: created_at.to_string(),
+            messages: vec![ThreadMessage {
+                author: "claude[bot]".to_string(),
+                author_is_bot: true,
+                body: body.to_string(),
+                created_at: created_at.to_string(),
+            }],
+            conversation_truncated: false,
             is_resolved: false,
             is_outdated: false,
-            reply_count: 0,
         };
         let mut out = vec![
             row(CommentKind::Review, "review", "approved", ""),

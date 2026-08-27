@@ -36,21 +36,23 @@ The snapshot:
 | `merge`        | enum   | `clean`, `conflicting`, or `blocked`                                   |
 | `sync`         | enum   | `in_sync`, `unpushed`, `behind`, or `unknown`, with a count when known |
 | `checks`       | list   | one row per latest check: `name` and `status` (conclusion is in it)    |
-| `comments`     | list   | one row per comment, newest first                                      |
-| `truncated`    | bool   | a limited surface had one more page, so a list is a prefix             |
+| `comments`     | list   | one row per review, prose comment, or thread, newest root first                    |
+| `truncated`    | bool   | a non-conversation surface had one more page, so a list is a prefix                 |
 
 A `comments` row:
 
-| field                        | type         | meaning                                                                          |
-| ---------------------------- | ------------ | -------------------------------------------------------------------------------- |
-| `kind`                       | enum         | `review` (a review body), `comment` (conversation), `finding` (inline)           |
-| `author`, `author_is_bot`    | string, bool | the `@login` and whether the author is a bot                                     |
-| `anchor`                     | string       | `path:line` or `path:start-end` for a `finding`, the kind word in other cases    |
-| `place`                      | object or none | path, range, and side for a `finding`, none in other cases                     |
-| `body`, `snippet`            | string       | the text as the forge returns it, only a `finding` has a snippet                 |
-| `created_at`                 | time         | post time, the newest-first sort key                                             |
-| `is_resolved`, `is_outdated` | bool         | thread state for a `finding`, always false in other cases                        |
-| `reply_count`                | int          | replies on a `finding` thread after the root                                     |
+| field                        | type           | meaning                                                                            |
+| ---------------------------- | -------------- | ---------------------------------------------------------------------------------- |
+| `id`                         | string         | stable provider-neutral identity; refresh selection uses it, never visible content |
+| `kind`                       | enum           | `review` (a review body), `comment` (conversation), `finding` (inline)             |
+| `author`, `author_is_bot`    | string, bool   | root `@login` and whether the root author is a bot                                  |
+| `anchor`                     | string         | `path:line` or `path:start-end` for a `finding`, the kind word in other cases      |
+| `place`                      | object or none | path, range, and side for a `finding`, none in other cases                         |
+| `body`, `snippet`            | string         | root text and finding hunk; the root owns snippet and anchor                       |
+| `created_at`                 | time           | root post time, the newest-first sort key                                           |
+| `messages`                   | ordered list   | every fetched renderable message, root first; each has author, bot flag, body, time |
+| `conversation_truncated`     | bool           | more messages exist in this row's conversation; not a list truncation              |
+| `is_resolved`, `is_outdated` | bool           | thread state for a `finding`, always false in other cases                          |
 
 ## Behavior
 
@@ -144,13 +146,10 @@ The footer shows `clean` as nothing.
 
 ### Comments
 
-- Reviews, inline threads, and conversation comments join into one list. The newest comment is first.
-- A finding location is a line range on a path. A thread on one line is a range of one line.
-- The `anchor` is `path:start-end` when the two ends differ. The `anchor` is `path:line` when they do not.
-- A thread with no line has an `anchor` that is only the path. That thread has no range.
-- The PR-level posts of a bot collapse to the latest post. All posts of a human stay.
-- `is_resolved` and `is_outdated` come from the forge. reviewr does not compute them again. Resolved threads and outdated threads stay in the list. The list marks them.
-- Each surface reads its newest 100 rows. The surface does not page until the end. One more page sets `truncated`. `pr-tab.md` marks the limited list.
+- Reviews, inline threads, and conversation comments join into one list. The newest root is first; a later reply never reorders its row.
+- A row has a stable provider identity. Refresh reconciles selection by that identity, even when its author, body, or reply content changes.
+- Each row carries its root and every fetched renderable reply in chronological order. The root keeps the anchor, snippet, and list sort timestamp.
+- Each surface reads its newest 100 rows. The surface does not page until the end. One more page sets snapshot `truncated`. A per-thread message cap sets only that row's `conversation_truncated`.
 - If a forge cannot find its newest page, reviewr serves the oldest page. The list is marked truncated.
 
 ### Refresh

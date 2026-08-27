@@ -4470,22 +4470,26 @@ fn pr_read_content(app: &App, inner: Rect) -> PrReadContent {
     let mut body_meta: Option<(usize, crate::markdown::Rendered)> = None;
     let mut snippet = None;
     if let Some(cm) = selected {
-        // The finding's range paints as Diff-view rows; only the prose body is markdown
-        // (specs/pr-tab.md).
+        // The finding's range paints as Diff-view rows; conversation messages remain markdown.
         snippet = push_finding_quote(&mut lines, app, cm, width, p);
-        let mut rendered = app.markdown_render(&cm.body, width.max(1));
-        let offset = lines.len();
-        lines.append(&mut rendered.lines);
-        body_meta = Some((offset, rendered));
-        if cm.reply_count > 0 {
-            let plural = if cm.reply_count == 1 { "reply" } else { "replies" };
+        for (index, message) in cm.messages.iter().enumerate() {
+            if index > 0 || !lines.is_empty() {
+                lines.push(Line::raw(""));
+            }
+            lines.push(Line::from(Span::styled(
+                format!("@{}", message.author),
+                Style::default().fg(p.dim2),
+            )));
+            let mut rendered = app.markdown_render(&message.body, width.max(1));
+            if index == 0 {
+                body_meta = Some((lines.len(), rendered.clone()));
+            }
+            lines.append(&mut rendered.lines);
+        }
+        if cm.conversation_truncated {
             lines.push(Line::raw(""));
             lines.push(Line::from(Span::styled(
-                format!(
-                    "↳ {} {plural} — open on {} to read",
-                    cm.reply_count,
-                    app.pr_forge.display_name()
-                ),
+                format!("+more ↗ on {}", app.pr_forge.display_name()),
                 Style::default().fg(p.dim2),
             )));
         }

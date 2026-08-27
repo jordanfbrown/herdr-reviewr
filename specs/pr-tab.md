@@ -66,13 +66,15 @@ The name of the tab is `PR` on each forge. The body text, the chip, the title of
 - If the description becomes empty, the row goes. The cursor goes to a valid row. The read pane starts again.
 - The read pane shows the selected item.
 
-| selected item              | the read pane shows                          |
-| -------------------------- | -------------------------------------------- |
-| a `finding`                | the range caption, the snippet, then the body |
-| a `review` or a `comment`  | the text of the comment                      |
-| the description row        | the PR description                           |
+| selected item              | the read pane shows                                      |
+| -------------------------- | -------------------------------------------------------- |
+| a `finding`                | the range caption, the snippet, then root and replies   |
+| a `review` or a `comment`  | root and replies                                         |
+| the description row        | the PR description                                       |
 
 - Bodies show as markdown (`markdown.md`).
+- A selected conversation renders its root followed by every fetched reply in chronological order. Each message shows its author and markdown body. The root remains the owner of the title, anchor, range caption, and snippet.
+- When and only when that conversation is truncated, its final row is `+more ↗` to the forge. Snapshot list truncation remains the footer marker.
 - A finding with a range shows a caption above the snippet. A one-line range shows `Comment on line N`. A wider range shows `Comment on lines A to B`. The navigator does not show this caption.
 - The caption puts `-` when the side is the old file. It puts `+` when the side is the new file and the range has insertions. It puts no sign when the new-file range has no change row.
 - A finding shows the line range of the comment as Diff-view content rows (`diff-view.md`). Then the finding shows the body.
@@ -137,13 +139,13 @@ The tab gets a new snapshot when one of these occurs:
 - If the user presses `r`, the tab stops the fetch that is in progress. Then the tab starts a new fetch.
 - If a fetch does not complete in one minute, the tab stops that fetch. Then the tab starts a new fetch.
 - The time of the PR fetch is not the time of the worktree poll (`tui.md`).
-- A new fetch keeps the position of the user. The cursor stays on the same comment by identity. The two panes keep their scroll positions.
+- A new fetch keeps the position of the user. The cursor stays on the same comment by stable provider identity. The navigator and reader keep scroll positions, clamped to their new content bounds.
 - If the comment is gone, the tab sets the cursor to a valid row. The read pane starts again.
 
 ## Non-goals
 
 - The tab does not jump from the anchor of a PR comment to the code tabs.
-- The tab does not change how a comment body shows. The body stays markdown. The reply count stays dim. There is no card frame.
+- The tab does not change how a message body shows. Each root and fetched reply stays markdown. There is no card frame.
 - The tab does not make a hunk again from the worktree.
 - The tab does not make a hunk from GitLab or Azure position data.
 - The tab does not make a hunk from one more forge call.

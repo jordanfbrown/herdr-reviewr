@@ -2389,20 +2389,16 @@ impl App {
         // it survives while the new snapshot still has a description, and an emptied one
         // vanishes like a deleted comment.
         let on_description = self.pr_on_description();
-        let selected = self
-            .pr_selected_comment()
-            .map(|c| (c.author.clone(), c.created_at.clone(), c.anchor.clone()));
+        let selected = self.pr_selected_comment().map(|c| c.id.clone());
         self.pr = view;
         let offset = self.pr_description_offset();
         let restored = if on_description {
             self.pr_has_description().then_some(0)
         } else {
-            selected.as_ref().and_then(|(author, created, anchor)| {
-                let i = self.pr_snapshot()?.comments.iter().position(|c| {
-                    c.author == *author && c.created_at == *created && c.anchor == *anchor
-                })?;
-                Some(i + offset)
-            })
+            selected
+                .as_ref()
+                .and_then(|id| self.pr_snapshot()?.comments.iter().position(|c| c.id == *id))
+                .map(|i| i + offset)
         };
         if let Some(i) = restored {
             self.pr_cursor = i;

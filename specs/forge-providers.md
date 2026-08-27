@@ -31,6 +31,8 @@ Each provider owns its full read. An optional surface that cannot be read adds n
 - The range of a thread is `startLine`..`line`. If the new-side lines are not there, the range is `originalStartLine`..`originalLine`. A `LEFT` thread uses the original pair even when GitHub also filled the new-side fields. The thread's `diffSide` is the finding's side.
 - The query finds PRs by head branch name in the target repository. Open PRs come on their own page beside the finished page. A long finished history cannot hide an open PR.
 - On a fork, an upstream result counts only when its head is in the fork. A merged PR or a closed PR whose fork was deleted still counts if the containment check confirms it.
+- GitHub's one PR-detail GraphQL call requests each review thread's first 100 comments in chronological order and reads `hasNextPage`. It makes no per-thread calls. A thread with another page sets that row's conversation truncation.
+- GitHub thread identity is the GraphQL review-thread `id`; PR-level review and issue-comment identities are their GraphQL node `id`.
 
 ## GitLab
 
@@ -47,6 +49,7 @@ Each provider owns its full read. An optional surface that cannot be read adds n
 - After the GitLab count limit of about 10,000 rows, reviewr serves the oldest page. The list is marked truncated.
 - The query finds MRs by `source_branch` in the target project. Opened MRs come on their own page beside the all-state page. A long finished history cannot hide an opened MR.
 - On a fork, an upstream result counts only when its source project is the fork.
+- GitLab discussion identity is the discussion `id`. reviewr keeps every existing non-system, non-empty note in its returned chronological order; system and empty notes do not render.
 
 ## Azure DevOps
 
@@ -69,6 +72,7 @@ Each provider owns its full read. An optional surface that cannot be read adds n
 - The query finds PRs by `sourceRefName`. The query uses the newest 100 active PRs and the newest 100 completed PRs. The query is in the target repository only.
 - A fork PR into the target is found through `forkSource`. That PR counts only when the pinned `HEAD` contains its source tip.
 - The query does not include a fork's own internal PRs. The query does not include a merged PR that is older than the completed window. The query does not include an abandoned PR.
+- Azure DevOps thread identity is `id`. reviewr keeps every existing non-system, non-deleted, non-empty comment in its returned chronological order.
 - An abandoned PR never counts as closed history. If the list cannot be read, the fetch fails.
 
 ## Non-goals

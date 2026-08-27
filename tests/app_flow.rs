@@ -3437,8 +3437,10 @@ fn apply_pr_follows_the_selected_comment_across_a_refresh() {
     use herdr_reviewr::app::Tab;
     use herdr_reviewr::forge::{Comment, PrSnapshot, PrView};
 
-    let comment = |author: &str, created: &str| Comment {
+    let comment = |id: &str, author: &str, body: &str, created: &str| Comment {
+        id: id.into(),
         author: author.into(),
+        body: body.into(),
         created_at: created.into(),
         ..common::comment()
     };
@@ -3454,8 +3456,8 @@ fn apply_pr_follows_the_selected_comment_across_a_refresh() {
 
     // Newest-first [ann@10:00, bob@09:00]; the cursor lands on the newest, then move to bob.
     app.apply_pr(snap(vec![
-        comment("ann", "2026-06-27T10:00:00Z"),
-        comment("bob", "2026-06-27T09:00:00Z"),
+        comment("ann-id", "ann", "first", "2026-06-27T10:00:00Z"),
+        comment("bob-id", "bob", "original", "2026-06-27T09:00:00Z"),
     ]));
     assert_eq!(app.pr_selected_comment().map(|c| c.author.as_str()), Some("ann"));
     app.pr_move(1);
@@ -3463,20 +3465,20 @@ fn apply_pr_follows_the_selected_comment_across_a_refresh() {
 
     // A refresh prepends a newer comment: the cursor follows bob to its new index, not index 1.
     app.apply_pr(snap(vec![
-        comment("cara", "2026-06-27T11:00:00Z"),
-        comment("ann", "2026-06-27T10:00:00Z"),
-        comment("bob", "2026-06-27T09:00:00Z"),
+        comment("cara-id", "cara", "new", "2026-06-27T11:00:00Z"),
+        comment("ann-id", "ann", "first", "2026-06-27T10:00:00Z"),
+        comment("bob-id", "renamed", "refreshed reply", "2026-06-27T09:00:00Z"),
     ]));
     assert_eq!(
-        app.pr_selected_comment().map(|c| c.author.as_str()),
-        Some("bob"),
-        "the cursor follows the same comment by identity, not its old index"
+        app.pr_selected_comment().map(|c| (c.id.as_str(), c.author.as_str(), c.body.as_str())),
+        Some(("bob-id", "renamed", "refreshed reply")),
+        "the cursor follows stable provider identity despite refreshed author and body"
     );
 
     // A refresh where bob is gone clamps the now-dangling cursor back into range.
     app.apply_pr(snap(vec![
-        comment("cara", "2026-06-27T11:00:00Z"),
-        comment("ann", "2026-06-27T10:00:00Z"),
+        comment("cara-id", "cara", "new", "2026-06-27T11:00:00Z"),
+        comment("ann-id", "ann", "first", "2026-06-27T10:00:00Z"),
     ]));
     assert_eq!(
         app.pr_selected_comment().map(|c| c.author.as_str()),

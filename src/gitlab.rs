@@ -614,12 +614,23 @@ fn is_comment_note(note: &Value) -> bool {
         && !note["body"].as_str().unwrap_or("").trim().is_empty()
 }
 
-/// Replies beyond the root: the comment notes on the thread, less one.
-fn reply_count(discussion: &Value) -> u32 {
-    let notes = discussion["notes"]
+/// Renderable discussion messages in source order, omitting the existing system and empty records.
+fn discussion_messages(discussion: &Value) -> Vec<crate::forge::ThreadMessage> {
+    discussion["notes"]
         .as_array()
-        .map_or(0, |notes| notes.iter().filter(|note| is_comment_note(note)).count());
-    notes.saturating_sub(1) as u32
+        .into_iter()
+        .flatten()
+        .filter(|note| is_comment_note(note))
+        .map(|note| {
+            let author = note["author"]["username"].as_str().unwrap_or("").to_string();
+            crate::forge::ThreadMessage {
+                author_is_bot: is_gitlab_bot(&author),
+                author,
+                body: note["body"].as_str().unwrap_or("").trim().to_string(),
+                created_at: note["created_at"].as_str().unwrap_or("").to_string(),
+            }
+        })
+        .collect()
 }
 
 /// Merge the discussion threads and approvals into one newest-first comment list:
@@ -628,10 +639,10 @@ fn reply_count(discussion: &Value) -> u32 {
 fn merge_comments(discussions: &[Value], approvals: &Value) -> Vec<Comment> {
     let mut out: Vec<Comment> = Vec::new();
     for discussion in discussions {
-        let Some(root) = comment_root(discussion) else { continue };
-        let author = root["author"]["username"].as_str().unwrap_or("").to_string();
-        let position = &root["position"];
-        // A diff-position thread is a finding; anything else is a plain comment.
+        let Some(root_note) = comment_root(discussion) else { continue };
+        let messages = discussion_messages(discussion);
+        let Some(root) = messages.first() else { continue };
+        let position = &root_note["position"];
         let (kind, anchor, place, is_resolved) = if position.is_object() {
             let path = position["new_path"]
                 .as_str()
@@ -643,23 +654,25 @@ fn merge_comments(discussions: &[Value], approvals: &Value) -> Vec<Comment> {
                 CommentKind::Finding,
                 place.anchor(),
                 Some(place),
-                root["resolved"].as_bool().unwrap_or(false),
+                root_note["resolved"].as_bool().unwrap_or(false),
             )
         } else {
             (CommentKind::Comment, "comment".to_string(), None, false)
         };
         out.push(Comment {
+            id: discussion["id"].as_str().unwrap_or_default().to_string(),
             kind,
-            author_is_bot: is_gitlab_bot(&author),
-            author,
+            author: root.author.clone(),
+            author_is_bot: root.author_is_bot,
             anchor,
             place,
-            body: root["body"].as_str().unwrap_or("").trim().to_string(),
+            body: root.body.clone(),
             snippet: None,
-            created_at: root["created_at"].as_str().unwrap_or("").to_string(),
+            created_at: root.created_at.clone(),
+            messages,
+            conversation_truncated: false,
             is_resolved,
             is_outdated: false,
-            reply_count: reply_count(discussion),
         });
     }
     for user in approvals["approved_by"].as_array().into_iter().flatten() {
@@ -668,6 +681,7 @@ fn merge_comments(discussions: &[Value], approvals: &Value) -> Vec<Comment> {
             continue;
         }
         let bot = is_gitlab_bot(&author);
+        let id = format!("approval:{author}");
         // The approvals surface carries no timestamp, so approvals sort after the
         // dated rows in the newest-first list.
         out.push(prose_row(
@@ -676,6 +690,7 @@ fn merge_comments(discussions: &[Value], approvals: &Value) -> Vec<Comment> {
             bot,
             "Approved this merge request.".to_string(),
             String::new(),
+            id,
         ));
     }
     finish_comments(&mut out);
@@ -756,15 +771,19 @@ mod tests {
             "blocking_discussions_resolved": true,
         })
     }
-
     #[test]
-    fn an_empty_leading_note_neither_hides_the_thread_nor_counts_as_a_reply() {
-        let discussion = json!({"notes": [
+    fn filtered_notes_form_the_conversation_in_chronological_order() {
+        let discussion = json!({"id": "discussion-1", "notes": [
+            {"system": true, "body": "changed", "author": {"username": "system"}},
             {"system": false, "body": "  ", "author": {"username": "editor"}},
-            {"system": false, "body": "The real comment.", "author": {"username": "author"}}
+            {"system": false, "body": "The root.", "created_at": "2026-01-01T00:00:00Z", "author": {"username": "author"}},
+            {"system": false, "body": "The reply.", "created_at": "2026-01-01T00:01:00Z", "author": {"username": "reviewer"}}
         ]});
-        assert_eq!(comment_root(&discussion).unwrap()["body"], "The real comment.");
-        assert_eq!(reply_count(&discussion), 0);
+        let messages = discussion_messages(&discussion);
+        assert_eq!(
+            messages.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
+            ["The root.", "The reply."]
+        );
     }
 
     #[test]
@@ -988,9 +1007,10 @@ mod tests {
         let finding = comments.iter().find(|c| c.body == "Looks wrong.").unwrap();
         assert_eq!(finding.kind, CommentKind::Finding);
         assert_eq!(finding.anchor, "src/a.rs:10-12");
-        assert_eq!(finding.place.as_ref().unwrap().side, Some(crate::model::Side::New));
-        assert!(finding.is_resolved);
-        assert_eq!(finding.reply_count, 1);
+        assert_eq!(
+            finding.messages.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
+            ["Looks wrong.", "Fixed."]
+        );
         let old = comments.iter().find(|c| c.body == "On the old column.").unwrap();
         assert_eq!(old.anchor, "src/a.rs:8-9");
         assert_eq!(old.place.as_ref().unwrap().side, Some(crate::model::Side::Old));

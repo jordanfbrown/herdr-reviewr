@@ -610,12 +610,23 @@ fn is_comment(comment: &Value) -> bool {
         && !comment["content"].as_str().unwrap_or("").trim().is_empty()
 }
 
-/// Replies beyond the root: the rendering comments on the thread, less one.
-fn reply_count(thread: &Value) -> u32 {
-    let comments = thread["comments"]
+/// Renderable thread messages in source order, omitting existing system and deleted records.
+fn thread_messages(thread: &Value) -> Vec<crate::forge::ThreadMessage> {
+    thread["comments"]
         .as_array()
-        .map_or(0, |comments| comments.iter().filter(|comment| is_comment(comment)).count());
-    comments.saturating_sub(1) as u32
+        .into_iter()
+        .flatten()
+        .filter(|comment| is_comment(comment))
+        .map(|comment| {
+            let author = comment["author"]["displayName"].as_str().unwrap_or("").to_string();
+            crate::forge::ThreadMessage {
+                author_is_bot: is_azure_bot(&comment["author"]),
+                author,
+                body: comment["content"].as_str().unwrap_or("").trim().to_string(),
+                created_at: comment["publishedDate"].as_str().unwrap_or("").to_string(),
+            }
+        })
+        .collect()
 }
 
 fn thread_line_range(context: &Value) -> (Option<u64>, Option<u64>) {
@@ -636,10 +647,9 @@ fn thread_line_range(context: &Value) -> (Option<u64>, Option<u64>) {
 fn merge_comments(threads: &[&Value], pr: &Value) -> Vec<Comment> {
     let mut out: Vec<Comment> = Vec::new();
     for thread in threads {
-        let Some(root) = comment_root(thread) else { continue };
-        let author = root["author"]["displayName"].as_str().unwrap_or("").to_string();
+        let messages = thread_messages(thread);
+        let Some(root) = messages.first() else { continue };
         let context = &thread["threadContext"];
-        // A file-position thread is a finding; anything else is a plain comment.
         let (kind, anchor, place, is_resolved) = match context["filePath"].as_str() {
             Some(path) => {
                 let path = path.trim_start_matches('/');
@@ -663,17 +673,19 @@ fn merge_comments(threads: &[&Value], pr: &Value) -> Vec<Comment> {
             None => (CommentKind::Comment, "comment".to_string(), None, false),
         };
         out.push(Comment {
+            id: thread["id"].as_u64().map_or_else(String::new, |id| id.to_string()),
             kind,
-            author_is_bot: is_azure_bot(&root["author"]),
-            author,
+            author: root.author.clone(),
+            author_is_bot: root.author_is_bot,
             anchor,
             place,
-            body: root["content"].as_str().unwrap_or("").trim().to_string(),
+            body: root.body.clone(),
             snippet: None,
-            created_at: root["publishedDate"].as_str().unwrap_or("").to_string(),
+            created_at: root.created_at.clone(),
+            messages,
+            conversation_truncated: false,
             is_resolved,
             is_outdated: false,
-            reply_count: reply_count(thread),
         });
     }
     for reviewer in pr["reviewers"].as_array().into_iter().flatten() {
@@ -689,7 +701,8 @@ fn merge_comments(threads: &[&Value], pr: &Value) -> Vec<Comment> {
         let bot = is_azure_bot(reviewer);
         // The vote carries no timestamp, so votes sort after the dated rows in the
         // newest-first list.
-        out.push(prose_row(CommentKind::Review, author, bot, body.to_string(), String::new()));
+        let id = format!("vote:{}", reviewer["id"].as_str().unwrap_or(&author));
+        out.push(prose_row(CommentKind::Review, author, bot, body.to_string(), String::new(), id));
     }
     finish_comments(&mut out);
     out
@@ -724,15 +737,17 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn an_empty_leading_comment_neither_hides_the_thread_nor_counts_as_a_reply() {
+    fn filtered_comments_form_the_conversation_in_chronological_order() {
         let thread = json!({"comments": [
-            {"commentType": "text", "isDeleted": false, "content": "  ",
-             "author": {"displayName": "Editor"}},
-            {"commentType": "text", "isDeleted": false, "content": "The real comment.",
-             "author": {"displayName": "Author"}}
+            {"commentType": "system", "content": "changed", "author": {"displayName": "System"}},
+            {"commentType": "text", "isDeleted": true, "content": "deleted", "author": {"displayName": "Editor"}},
+            {"commentType": "text", "content": "The root.", "publishedDate": "2026-01-01T00:00:00Z", "author": {"displayName": "Author"}},
+            {"commentType": "text", "content": "The reply.", "publishedDate": "2026-01-01T00:01:00Z", "author": {"displayName": "Reviewer"}}
         ]});
-        assert_eq!(comment_root(&thread).unwrap()["content"], "The real comment.");
-        assert_eq!(reply_count(&thread), 0);
+        assert_eq!(
+            thread_messages(&thread).iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
+            ["The root.", "The reply."]
+        );
     }
 
     #[test]
@@ -830,12 +845,11 @@ mod tests {
             // A system thread renders nothing and spends no slot.
             {"comments": [{"commentType": "system", "content": "MerlinBot added 3 reviewers",
                 "author": {"displayName": "Microsoft.VisualStudio.Services.TFS"}}]},
-            // A PR-level thread is a comment row with its replies counted.
-            {"status": "active", "comments": [
+            {"id": 10, "status": "active", "comments": [
                 {"commentType": "text", "content": "Looks good overall.",
                  "publishedDate": "2026-02-18T05:00:00Z",
                  "author": {"displayName": "Mark Wilkie"}},
-                {"commentType": "text", "content": "Agreed.",
+                {"commentType": "text", "content": "Agreed.", "publishedDate": "2026-02-18T05:01:00Z",
                  "author": {"displayName": "Michael Stuckey"}},
             ]},
             // A file-position thread is a finding with the thread's resolved status.
@@ -864,8 +878,11 @@ mod tests {
         assert!(finding.author_is_bot, "a build-service identity is a bot");
         assert!(finding.snippet.is_none(), "a thread carries no code context");
         let comment = comments.iter().find(|c| c.kind == CommentKind::Comment).unwrap();
-        assert_eq!(comment.author, "Mark Wilkie");
-        assert_eq!(comment.reply_count, 1);
+        assert_eq!(comment.id, "10");
+        assert_eq!(
+            comment.messages.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
+            ["Looks good overall.", "Agreed."]
+        );
         let votes: Vec<&Comment> =
             comments.iter().filter(|c| c.kind == CommentKind::Review).collect();
         assert_eq!(votes.len(), 2, "a zero vote and a container render nothing");
