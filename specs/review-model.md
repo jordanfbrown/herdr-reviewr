@@ -43,13 +43,14 @@ A scope selects which changes `Changes` shows and which files `All files` annota
 
 The `branch` scope diffs against the merge-base of the base and `HEAD`. The base is always a recorded choice, never inferred. The first source that resolves wins:
 
-| # | source              | base is                                              |
-| - | ------------------- | ---------------------------------------------------- |
-| 1 | `--base <ref>` flag | any rev, resolved verbatim, else as a branch name    |
-| 2 | the repo pick       | the revision named in the base picker (`input.md`)   |
-| 3 | `origin/HEAD`       | the default branch it names, when present            |
+| # | source                | base is                                              |
+| - | --------------------- | ---------------------------------------------------- |
+| 1 | `--base <ref>` flag   | any rev, resolved verbatim, else as a branch name    |
+| 2 | `HERDR_REVIEWR_BASE`  | an embedding launcher's exact comparison revision   |
+| 3 | the repo pick         | the revision named in the base picker (`input.md`)   |
+| 4 | `origin/HEAD`         | the default branch it names, when present            |
 
-A branch name resolves through `refs/remotes/origin/<name>`, then `refs/heads/<name>`. A leading `refs/heads/`, `refs/remotes/origin/`, or `origin/` prefix on a `--base` branch name is stripped first. A `--base` rev that is not a branch keeps the flag spelling, so `origin/HEAD` does not paint as live `HEAD`. A source that does not resolve to a commit is skipped, never an error. A spelling that starts with `-` does not resolve. When no source resolves, `branch` shows nothing and the footer offers the picker (`input.md`). The other scopes are unaffected.
+`HERDR_REVIEWR_BASE` is normalized into the same runtime base input as `--base` before resolution, with an explicit flag taking precedence. The environment value exists for launchers that already resolved an immutable review base, such as a GitHub PR merge-base; ordinary plugin opens do not set it. On first launch, reviewr records that value in a private ref keyed by worktree path. A pane restored after the host restarts reads the ref when neither `--base` nor the environment is present, so the launcher comparison survives even when the host only restores the pane command. A branch name resolves through `refs/remotes/origin/<name>`, then `refs/heads/<name>`. A leading `refs/heads/`, `refs/remotes/origin/`, or `origin/` prefix on a base branch name is stripped first. A base rev that is not a branch keeps its spelling, so `origin/HEAD` does not paint as live `HEAD`. A source that does not resolve to a commit is skipped, never an error. A spelling that starts with `-` does not resolve. When no source resolves, `branch` shows nothing and the header names the first skipped source if one exists (`tui.md`).
 
 The pick:
 
@@ -70,7 +71,7 @@ Open decision: whether an open PR's target branch (`forge-host.md`) joins the ch
 
 Open decision: whether a name that exists both locally and on origin should resolve local first. Origin first diffs a stacked branch against a stale pushed tip. Local first diffs against a stale local `main`. The two failures are symmetric, so the order stays as it is until one is shown to hurt more.
 
-The installed pane passes no arguments, so `--base` serves standalone and dev runs.
+The standard installed pane passes no base input and starts in `default_scope`. A launcher may set `HERDR_REVIEWR_BASE` on its plugin pane; a launcher-backed pane starts in `branch` regardless of `default_scope`, including after the host restores it from the persisted worktree pin. `--base` remains available for standalone and development runs and takes precedence, but does not itself override `default_scope`.
 
 ### Commit pick
 

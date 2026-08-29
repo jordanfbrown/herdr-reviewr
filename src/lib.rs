@@ -72,6 +72,15 @@ const RESOLVING_NOTE: &str = "resolving plugin config…";
 pub fn run() -> Result<()> {
     let mut cfg = Config::from_env();
     log::init();
+    if let Some(base) = cfg.launcher_base.as_deref() {
+        let repo = repo_root(&cfg);
+        git::write_launcher_base(&repo, base).map_err(|error| anyhow::anyhow!(error.0))?;
+    }
+    if cfg.base.is_none() {
+        cfg.launcher_base =
+            git::read_launcher_base(&repo_root(&cfg)).map_err(|error| anyhow::anyhow!(error.0))?;
+        cfg.base.clone_from(&cfg.launcher_base);
+    }
     // The config directory resolves once, at startup; every later read rereads only the
     // file inside it (`specs/config.md`). Only the environment names it here: the CLI
     // fallback is a herdr subprocess, so it waits until after the first paint below —
@@ -350,7 +359,9 @@ fn app_for(cfg: &Config, initial_config: &Result<PluginConfig, config::PluginCon
     match initial_config {
         Ok(plugin_config) => ready_app(cfg, plugin_config.clone()),
         Err(error) => {
-            let mut app = App::blocked(repo_root(cfg), Scope::Uncommitted, cfg.base.clone());
+            let scope =
+                if cfg.launcher_base.is_some() { Scope::Branch } else { Scope::Uncommitted };
+            let mut app = App::blocked(repo_root(cfg), scope, cfg.base.clone());
             app.set_config_error(error.to_string());
             app
         }
@@ -360,7 +371,8 @@ fn app_for(cfg: &Config, initial_config: &Result<PluginConfig, config::PluginCon
 /// Build a fresh working reviewr pane only after the plugin configuration has validated.
 fn ready_app(cfg: &Config, plugin_config: PluginConfig) -> App {
     let repo = repo_root(cfg);
-    let scope = plugin_config.default_scope();
+    let scope =
+        if cfg.launcher_base.is_some() { Scope::Branch } else { plugin_config.default_scope() };
     logln!(
         "start repo={} poll={:?} base={:?} scope={}",
         repo.display(),
@@ -3497,6 +3509,20 @@ mod refresh_tests {
         ));
         assert_eq!(app.scope, Scope::LastTurn, "a reread never switches the active scope");
         assert_eq!(epoch, 0, "a default_scope change invalidates no running work");
+    }
+
+    #[test]
+    fn a_launcher_backed_pane_starts_in_branch_scope_over_the_configured_default() {
+        let repo = tempfile::tempdir().unwrap();
+        let config_dir = tempfile::tempdir().unwrap();
+        std::fs::write(config_dir.path().join("config.toml"), "default_scope = \"uncommitted\"\n")
+            .unwrap();
+        let mut cfg = Config::parse([repo.path().display().to_string()]);
+        cfg.base = Some("abc123".to_string());
+        cfg.launcher_base = cfg.base.clone();
+
+        let app = ready_app(&cfg, plugin_config_in(config_dir.path()).unwrap());
+        assert_eq!(app.scope, Scope::Branch);
     }
 
     #[test]

@@ -14,6 +14,8 @@ pub struct Config {
     pub repo: PathBuf,
     pub poll: Duration,
     pub base: Option<String>,
+    /// The embedding launcher's base before CLI precedence, retained so startup can persist it.
+    pub launcher_base: Option<String>,
     pub theme: Option<String>,
     /// `Some(false)` when `--wrap off` is passed; `None` keeps the default (wrap on).
     pub wrap: Option<bool>,
@@ -54,15 +56,30 @@ impl Config {
             repo,
             poll: Duration::from_millis(poll_ms.max(200)),
             base,
+            launcher_base: None,
             theme,
             wrap,
             plugin_config_dir: None,
         }
     }
 
-    /// Parse from the real process arguments.
+    /// Parse from the real process arguments. A launcher may pin an exact comparison commit
+    /// through `HERDR_REVIEWR_BASE`; an explicit `--base` still wins for this process. The
+    /// launcher value remains available separately so startup can persist it across host restarts.
     pub fn from_env() -> Self {
-        Self::parse(std::env::args().skip(1))
+        Self::parse_with_base(std::env::args().skip(1), std::env::var("HERDR_REVIEWR_BASE").ok())
+    }
+
+    fn parse_with_base<I: IntoIterator<Item = String>>(
+        args: I,
+        environment_base: Option<String>,
+    ) -> Self {
+        let mut config = Self::parse(args);
+        config.launcher_base = environment_base.filter(|base| !base.is_empty());
+        if config.base.is_none() {
+            config.base.clone_from(&config.launcher_base);
+        }
+        config
     }
 }
 
@@ -712,6 +729,23 @@ mod tests {
         let c = parse(&[]);
         assert_eq!(c.poll, Duration::from_secs(2));
         assert_eq!(c.base, None);
+    }
+
+    #[test]
+    fn environment_base_fills_missing_cli_base_and_remains_identifiable() {
+        let c = Config::parse_with_base(["/tmp/work".to_string()], Some("abc123".to_string()));
+        assert_eq!(c.base.as_deref(), Some("abc123"));
+        assert_eq!(c.launcher_base.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn cli_base_overrides_environment_base_without_hiding_the_launcher_value() {
+        let c = Config::parse_with_base(
+            ["--base".to_string(), "origin/dev".to_string()],
+            Some("abc123".to_string()),
+        );
+        assert_eq!(c.base.as_deref(), Some("origin/dev"));
+        assert_eq!(c.launcher_base.as_deref(), Some("abc123"));
     }
 
     #[test]

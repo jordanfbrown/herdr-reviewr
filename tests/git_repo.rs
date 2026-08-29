@@ -9,8 +9,9 @@ use common::Repo;
 use herdr_reviewr::git::{
     ResolvedBase, abbreviate_oid, all_files, changed_against_tree,
     changed_files as changed_files_oid, clear_base_pick, default_branch_name, file_content,
-    list_branches, merge_base as merge_base_oid, read_base_pick, read_baseline_ref, resolve_base,
-    resolve_commit, snapshot_worktree, worktree_key, write_base_pick, write_baseline_ref,
+    list_branches, merge_base as merge_base_oid, read_base_pick, read_baseline_ref,
+    read_launcher_base, resolve_base, resolve_commit, snapshot_worktree, worktree_key,
+    write_base_pick, write_baseline_ref, write_launcher_base,
 };
 use herdr_reviewr::model::{ChangeKind, ChangedFile, Scope};
 
@@ -277,6 +278,26 @@ fn the_pick_persists_in_a_private_ref_and_clears() {
     let reviewr_refs: Vec<&str> = refs.lines().filter(|l| !l.starts_with("refs/heads/")).collect();
     assert_eq!(reviewr_refs, ["refs/reviewr/base-pick"]);
     assert_eq!(r.git(&["status", "--porcelain"]).trim(), "");
+}
+
+#[test]
+fn a_launcher_base_persists_per_worktree_for_a_restored_pane() {
+    let r = Repo::init();
+    r.write("base.rs", "1\n");
+    r.commit_all("base");
+    let base = r.git(&["rev-parse", "HEAD"]).trim().to_string();
+
+    write_launcher_base(r.path(), &base).unwrap();
+    assert_eq!(read_launcher_base(r.path()).unwrap().as_deref(), Some(base.as_str()));
+    assert_eq!(read_base_pick(r.path()).unwrap(), None, "a launcher pin is not a repo-wide pick");
+
+    let sibling_path = r.path().join("sibling");
+    std::fs::create_dir_all(&sibling_path).unwrap();
+    assert_eq!(
+        read_launcher_base(&sibling_path).unwrap(),
+        None,
+        "another worktree key is isolated"
+    );
 }
 
 #[test]

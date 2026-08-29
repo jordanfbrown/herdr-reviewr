@@ -202,6 +202,7 @@ CLI flags on the pane command:
 | --- | --- | --- |
 | `--poll <ms>` | `2000` | worktree poll interval (min `200`) |
 | `--base <ref>` | auto | base for `branch` scope, any rev, overrides the pick |
+| `HERDR_REVIEWR_BASE` | unset | launcher-provided base for `branch` scope; `--base` wins |
 | `--theme <name>` | `catppuccin` | UI + syntax theme (see below) |
 | `--wrap <on\|off>` | `on` | soft-wrap long diff lines (`w` toggles at runtime) |
 
@@ -281,7 +282,7 @@ on it, and holds until you pick again. Choosing the default branch clears it.
 You can also type any revision, like `HEAD~2`, a tag, or a SHA prefix. The header shows what
 resolved: `vs HEAD~2 (a1b2c3d)`.
 
-`--base <ref>` sets the base for this pane. It wins over the pick and disables the picker.
+`--base <ref>` sets the base for this pane. `HERDR_REVIEWR_BASE` provides the same pin for an embedding launcher; an explicit flag wins. A launcher pin is stored per worktree so it survives a Herdr restart, and launcher-backed panes start in **branch** even when `default_scope` is `uncommitted`. Either input overrides the pick and disables the picker.
 
 ### Editor
 

@@ -1019,18 +1019,32 @@ pub fn file_content(repo: &Path, rev: &str, path: &str) -> String {
 
 const BASE_PICK_REF: &str = "refs/reviewr/base-pick";
 
+fn launcher_base_ref(repo: &Path) -> String {
+    format!("refs/reviewr/launcher-base/{}", worktree_key(repo))
+}
+
+/// The embedding launcher's recorded base for this worktree, used when a restored pane no
+/// longer has the launch environment that created it.
+pub fn read_launcher_base(repo: &Path) -> Result<Option<String>, GitFail> {
+    read_base_blob(repo, &launcher_base_ref(repo))
+}
+
 /// The recorded pick's spelling, or `None` when no pick is recorded. One git call, so a
 /// concurrent clear from another pane can never split the read the way an exists-then-read
 /// pair would; a failed read is no pick, matching the chain's skip-never-error contract
 /// (`specs/review-model.md`).
 pub fn read_base_pick(repo: &Path) -> Result<Option<String>, GitFail> {
-    let out = run_git(repo, &["cat-file", "blob", BASE_PICK_REF])?;
+    read_base_blob(repo, BASE_PICK_REF)
+}
+
+fn read_base_blob(repo: &Path, name: &str) -> Result<Option<String>, GitFail> {
+    let out = run_git(repo, &["cat-file", "blob", name])?;
     if !out.status.success() {
         return Ok(None);
     }
-    let name = String::from_utf8_lossy(&out.stdout);
-    let name = name.trim();
-    Ok(pick_spelling_shaped(name).then(|| name.to_string()))
+    let spelling = String::from_utf8_lossy(&out.stdout);
+    let spelling = spelling.trim();
+    Ok(pick_spelling_shaped(spelling).then(|| spelling.to_string()))
 }
 
 /// One printable line, not a git option (`specs/review-model.md`). `HEAD~1` and a tag are
@@ -1057,6 +1071,14 @@ fn branch_name_shaped(value: &str) -> bool {
 pub fn write_base_pick(repo: &Path, name: &str) -> Result<(), GitFail> {
     let blob = git_stdin(repo, &["hash-object", "-w", "--stdin"], name)?;
     git_strict(repo, &["update-ref", BASE_PICK_REF, blob.trim()])?;
+    Ok(())
+}
+
+/// Record an embedding launcher's base for this worktree. The per-worktree ref prevents one
+/// detached PR checkout from changing another worktree's base in the shared repository.
+pub fn write_launcher_base(repo: &Path, name: &str) -> Result<(), GitFail> {
+    let blob = git_stdin(repo, &["hash-object", "-w", "--stdin"], name)?;
+    git_strict(repo, &["update-ref", &launcher_base_ref(repo), blob.trim()])?;
     Ok(())
 }
 
