@@ -54,6 +54,8 @@ pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
     let path = host_path();
     let mut cmd = resolve_on(&path, program).map_or_else(|| Command::new(program), Command::new);
     cmd.env("PATH", path);
+    // Background reads must not write a refreshed index over another process's staged state.
+    cmd.env("GIT_OPTIONAL_LOCKS", "0");
     cmd
 }
 
@@ -84,10 +86,17 @@ pub fn on_path(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{COMMON_BINS, appended_path, prepended_path, resolve_on};
+    use super::{COMMON_BINS, appended_path, command, prepended_path, resolve_on};
     use std::env;
     use std::ffi::OsStr;
     use std::path::PathBuf;
+
+    #[test]
+    fn command_disables_git_optional_locks() {
+        let cmd = command("git");
+        let lock = cmd.get_envs().find(|(k, _)| *k == OsStr::new("GIT_OPTIONAL_LOCKS"));
+        assert_eq!(lock, Some((OsStr::new("GIT_OPTIONAL_LOCKS"), Some(OsStr::new("0")))));
+    }
 
     #[test]
     fn prepended_path_puts_the_common_bins_in_front_of_the_inherited_path() {

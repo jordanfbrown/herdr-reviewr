@@ -1682,7 +1682,7 @@ mod tests {
         // A real worktree resolves to its root. Compare against std canonicalization, an oracle
         // independent of `worktree_of` (both git and std resolve the temp dir's symlinks).
         let repo = tempfile::tempdir().unwrap();
-        let status = std::process::Command::new("git")
+        let status = crate::proc::command("git")
             .arg("-C")
             .arg(repo.path())
             .args(["init", "-q"])
